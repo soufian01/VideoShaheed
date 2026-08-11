@@ -13,13 +13,13 @@ export async function generateMetadata(): Promise<Metadata> {
   const imageUrl = `${protocol}://${host}/og.png`;
 
   return {
-    title: "ReelType — Sottotitoli dinamici per Reel",
-    description: "Carica un Reel, personalizza i sottotitoli parola per parola ed esporta il video pronto per i social.",
+    title: "ReelType — Dynamic captions for social video",
+    description: "Upload your videos, customize word-by-word captions and export content ready for social media.",
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
     openGraph: {
       title: "ReelType",
-      description: "Sottotitoli che seguono ogni parola.",
-      images: [{ url: imageUrl, width: 1792, height: 925, alt: "ReelType — sottotitoli dinamici per Reel" }],
+      description: "Captions that follow every word.",
+      images: [{ url: imageUrl, width: 1792, height: 925, alt: "ReelType — dynamic captions for social video" }],
     },
     twitter: { card: "summary_large_image", images: [imageUrl] },
   };
@@ -27,7 +27,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="it">
+    <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
     </html>
   );

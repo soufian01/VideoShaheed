@@ -1,98 +1,61 @@
-# vinext-starter
+# ReelType
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+ReelType è una demo SaaS che genera sottotitoli dinamici, sincronizzati parola
+per parola, per video verticali. Tutta l'elaborazione avviene nel browser:
+nessun video viene caricato su un server e non serve una chiave API.
 
-## Prerequisites
+## Funzioni
 
-- Node.js `>=22.13.0`
+- caricamento di video MP4, MOV e WebM senza un limite applicativo di durata;
+- caricamento e gestione di più video nello stesso progetto;
+- trascrizione automatica con Whisper eseguito nel browser;
+- WebGPU quando disponibile, con fallback WebAssembly;
+- timestamp per ogni parola ed effetto karaoke;
+- evidenziazione tramite colore o box arrotondato;
+- posizionamento e ridimensionamento diretto dei sottotitoli sull'anteprima;
+- posizione, dimensione, colori, maiuscolo e preset grafici;
+- esportazione del video elaborato direttamente dal browser.
 
-## Quick Start
+## Requisiti
+
+- Node.js 22.13 o successivo;
+- Chrome o Edge aggiornato consigliati per WebGPU;
+- connessione internet al primo utilizzo, necessaria per scaricare il modello;
+- memoria sufficiente per decodificare il video nel browser.
+
+## Avvio locale
 
 ```bash
 npm install
 npm run dev
+```
+
+Apri `http://localhost:3000`.
+
+## Verifica della build
+
+```bash
 npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+## Come funziona
 
-## Included Shape
+Il browser estrae l'audio dal video, lo converte a 16 kHz mono e lo invia a un
+Web Worker. Il worker carica `onnx-community/whisper-tiny` tramite
+Transformers.js, genera il testo e restituisce i timestamp delle singole parole.
+Il modello viene memorizzato nella cache del browser dopo il primo download.
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+## Privacy e costi
 
-## Workspace Auth Headers
+La trascrizione non usa backend, API a consumo o account esterni. Il video resta
+sul dispositivo dell'utente. Il modello Whisper viene scaricato dal repository
+pubblico Hugging Face al primo utilizzo.
 
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
+## Pubblicazione
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+Il progetto è pronto per essere inserito in un repository GitHub. Prima della
+pubblicazione controlla `git status`, scegli una licenza e verifica le condizioni
+del servizio di hosting. Il piano Vercel Hobby è indicato solo per progetti
+personali e non commerciali.
 
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+Non sono richieste variabili d'ambiente o chiavi segrete.

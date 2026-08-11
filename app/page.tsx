@@ -1,13 +1,27 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type WordCue = { word: string; start: number; end: number };
-type Position = "top" | "middle" | "bottom";
+type Position = "top" | "middle" | "bottom" | "custom";
 type StylePreset = "impact" | "minimal" | "boxed";
+type ActiveStyle = "color" | "background";
+type TranscriptionStatus = "idle" | "processing" | "ready" | "error";
+type VideoProject = {
+  id: string;
+  file: File;
+  url: string;
+  name: string;
+  duration: number;
+  cues: WordCue[];
+  transcript: string;
+  status: TranscriptionStatus;
+  progress: number;
+  message: string;
+  error: string;
+};
 
-const SAMPLE_TEXT =
-  "Tre secondi per catturare l’attenzione. Il segreto è dire subito qualcosa che vale la pena ascoltare.";
+const SAMPLE_TEXT = "Make every word impossible to miss.";
 
 function formatTime(seconds: number) {
   if (!Number.isFinite(seconds)) return "0:00";
@@ -17,111 +31,220 @@ function formatTime(seconds: number) {
 }
 
 function createCues(text: string, duration: number) {
-  const clean = text.trim().split(/\s+/).filter(Boolean);
-  if (!clean.length) return [];
-  const usableDuration = Math.max(duration || clean.length * 0.42, clean.length * 0.18);
-  const weights = clean.map((word) => Math.max(2.4, word.replace(/[^\p{L}\p{N}]/gu, "").length * 0.72));
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-  let cursor = 0;
-  return clean.map((word, index) => {
-    const wordDuration = (weights[index] / totalWeight) * usableDuration;
-    const cue = { word, start: cursor, end: cursor + wordDuration };
-    cursor += wordDuration;
-    return cue;
-  });
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const wordDuration = duration / Math.max(words.length, 1);
+  return words.map((word, index) => ({ word, start: index * wordDuration, end: (index + 1) * wordDuration }));
 }
 
 function chunkForIndex(cues: WordCue[], activeIndex: number) {
   if (!cues.length) return { words: [] as WordCue[], offset: 0 };
-  const safeIndex = Math.max(0, activeIndex);
-  const chunkSize = 5;
-  const offset = Math.floor(safeIndex / chunkSize) * chunkSize;
-  return { words: cues.slice(offset, offset + chunkSize), offset };
+  const offset = Math.floor(Math.max(0, activeIndex) / 5) * 5;
+  return { words: cues.slice(offset, offset + 5), offset };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 export default function Home() {
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [fileName, setFileName] = useState("");
-  const [duration, setDuration] = useState(18);
+  const [videos, setVideos] = useState<VideoProject[]>([]);
+  const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [transcript, setTranscript] = useState(SAMPLE_TEXT);
-  const [cues, setCues] = useState<WordCue[]>(() => createCues(SAMPLE_TEXT, 18));
   const [position, setPosition] = useState<Position>("bottom");
+  const [captionX, setCaptionX] = useState(50);
+  const [captionY, setCaptionY] = useState(78);
+  const [captionWidth, setCaptionWidth] = useState(86);
   const [preset, setPreset] = useState<StylePreset>("impact");
   const [fontSize, setFontSize] = useState(34);
   const [textColor, setTextColor] = useState("#FFFFFF");
   const [activeColor, setActiveColor] = useState("#D9FF43");
+  const [activeStyle, setActiveStyle] = useState<ActiveStyle>("color");
   const [uppercase, setUppercase] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [toast, setToast] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const demoTimerRef = useRef<number | null>(null);
+  const phoneScreenRef = useRef<HTMLDivElement>(null);
+  const whisperWorkerRef = useRef<Worker | null>(null);
+  const videosRef = useRef<VideoProject[]>([]);
+  const dragStateRef = useRef<null | {
+    mode: "move" | "resize";
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startFontSize: number;
+    frameWidth: number;
+    frameHeight: number;
+  }>(null);
 
+  const activeVideo = useMemo(
+    () => videos.find((video) => video.id === activeVideoId) ?? null,
+    [videos, activeVideoId],
+  );
+  const videoUrl = activeVideo?.url ?? null;
+  const duration = activeVideo?.duration || 18;
+  const cues = activeVideo ? activeVideo.cues : createCues(SAMPLE_TEXT, 18);
+  const transcript = activeVideo?.transcript ?? "";
+  const transcriptionStatus = activeVideo?.status ?? "idle";
+  const transcriptionProgress = activeVideo?.progress ?? 0;
+  const transcriptionMessage = activeVideo?.message ?? "";
+  const transcriptionError = activeVideo?.error ?? "";
   const activeIndex = useMemo(
     () => Math.max(0, cues.findIndex((cue) => currentTime >= cue.start && currentTime < cue.end)),
     [cues, currentTime],
   );
   const visibleChunk = useMemo(() => chunkForIndex(cues, activeIndex), [cues, activeIndex]);
+  const anyVideoProcessing = videos.some((video) => video.status === "processing");
+
+  useEffect(() => { videosRef.current = videos; }, [videos]);
 
   useEffect(() => {
-    return () => {
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
-      if (demoTimerRef.current) window.clearInterval(demoTimerRef.current);
+    const worker = new Worker(new URL("./whisper.worker.ts", import.meta.url), { type: "module" });
+    whisperWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<{
+      type: "status" | "result" | "error";
+      videoId: string;
+      message?: string;
+      progress?: number;
+      text?: string;
+      words?: WordCue[];
+    }>) => {
+      const data = event.data;
+      if (data.type === "status") {
+        updateVideo(data.videoId, { message: data.message || "Whisper is working…", progress: data.progress || 0 });
+      } else if (data.type === "result" && data.words?.length) {
+        updateVideo(data.videoId, {
+          transcript: data.text || data.words.map((item) => item.word).join(" "),
+          cues: data.words,
+          progress: 100,
+          status: "ready",
+          message: "Transcription complete",
+        });
+        notify(`${data.words.length} words transcribed automatically`);
+      } else if (data.type === "error") {
+        updateVideo(data.videoId, { error: data.message || "Transcription failed", status: "error" });
+      }
     };
-  }, [videoUrl]);
+
+    return () => worker.terminate();
+  }, []);
+
+  useEffect(() => () => videosRef.current.forEach((video) => URL.revokeObjectURL(video.url)), []);
+
+  function updateVideo(id: string, patch: Partial<VideoProject>) {
+    setVideos((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
 
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   }
 
-  function loadFile(file?: File) {
-    if (!file) return;
-    if (!file.type.startsWith("video/")) {
-      notify("Scegli un file video valido");
+  async function transcribeVideo(project: VideoProject) {
+    updateVideo(project.id, {
+      status: "processing",
+      error: "",
+      message: "Extracting audio from the video…",
+      progress: 2,
+      transcript: "",
+      cues: [],
+    });
+    try {
+      const arrayBuffer = await project.file.arrayBuffer();
+      const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) throw new Error("This browser cannot decode the audio track");
+      const audioContext = new AudioContextClass();
+      const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+      const targetRate = 16_000;
+      const offlineContext = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate), targetRate);
+      const source = offlineContext.createBufferSource();
+      source.buffer = decoded;
+      source.connect(offlineContext.destination);
+      source.start(0);
+      const rendered = await offlineContext.startRendering();
+      const samples = rendered.getChannelData(0).slice();
+      await audioContext.close();
+      if (!whisperWorkerRef.current) throw new Error("Whisper is not ready yet");
+      updateVideo(project.id, { message: "Preparing Whisper in your browser…" });
+      whisperWorkerRef.current.postMessage({ type: "transcribe", videoId: project.id, audio: samples }, [samples.buffer]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Transcription failed";
+      updateVideo(project.id, { error: message, status: "error" });
+      notify("I could not read the audio track");
+    }
+  }
+
+  function loadFiles(fileList?: FileList | File[]) {
+    const validFiles = Array.from(fileList || []).filter((file) => file.type.startsWith("video/"));
+    if (!validFiles.length) {
+      notify("Choose one or more valid video files");
       return;
     }
-    if (videoUrl) URL.revokeObjectURL(videoUrl);
-    const url = URL.createObjectURL(file);
-    setVideoUrl(url);
-    setFileName(file.name);
+    const additions: VideoProject[] = validFiles.map((file) => ({
+      id: `${Date.now()}-${crypto.randomUUID()}`,
+      file,
+      url: URL.createObjectURL(file),
+      name: file.name,
+      duration: 18,
+      cues: [],
+      transcript: "",
+      status: "idle",
+      progress: 0,
+      message: "Ready to transcribe",
+      error: "",
+    }));
+    setVideos((items) => [...items, ...additions]);
+    setActiveVideoId(additions[0].id);
     setCurrentTime(0);
     setIsPlaying(false);
-    notify("Video caricato — ora genera i sottotitoli");
+    if (anyVideoProcessing) notify("Videos added. Select them after the current transcription finishes.");
+    else void transcribeVideo(additions[0]);
+    notify(`${additions.length} video${additions.length > 1 ? "s" : ""} added`);
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    loadFile(event.dataTransfer.files[0]);
+    loadFiles(event.dataTransfer.files);
   }
 
-  function generateSubtitles() {
-    const next = createCues(transcript, duration);
-    setCues(next);
+  function selectVideo(project: VideoProject) {
+    if (project.id === activeVideoId) {
+      if (project.status === "idle" && !anyVideoProcessing) void transcribeVideo(project);
+      return;
+    }
+    videoRef.current?.pause();
+    setActiveVideoId(project.id);
     setCurrentTime(0);
-    if (videoRef.current) videoRef.current.currentTime = 0;
-    notify(`${next.length} parole sincronizzate`);
+    setIsPlaying(false);
+    if (project.status === "idle") {
+      if (anyVideoProcessing) notify("Finish the current transcription before starting another video");
+      else void transcribeVideo(project);
+    }
+  }
+
+  function removeVideo(id: string) {
+    const target = videos.find((video) => video.id === id);
+    if (!target) return;
+    URL.revokeObjectURL(target.url);
+    const remaining = videos.filter((video) => video.id !== id);
+    setVideos(remaining);
+    if (id === activeVideoId) {
+      const next = remaining[0] ?? null;
+      setActiveVideoId(next?.id ?? null);
+      setCurrentTime(0);
+      if (next?.status === "idle" && !remaining.some((video) => video.status === "processing")) void transcribeVideo(next);
+    }
   }
 
   function togglePlayback() {
-    if (videoRef.current && videoUrl) {
-      if (videoRef.current.paused) void videoRef.current.play();
-      else videoRef.current.pause();
-      return;
-    }
-    if (isPlaying) {
-      if (demoTimerRef.current) window.clearInterval(demoTimerRef.current);
-      setIsPlaying(false);
-      return;
-    }
-    setIsPlaying(true);
-    demoTimerRef.current = window.setInterval(() => {
-      setCurrentTime((time) => (time >= duration ? 0 : Math.min(duration, time + 0.05)));
-    }, 50);
+    if (!videoRef.current || !videoUrl) return;
+    if (videoRef.current.paused) void videoRef.current.play();
+    else videoRef.current.pause();
   }
 
   function seek(value: number) {
@@ -129,43 +252,134 @@ export default function Home() {
     if (videoRef.current) videoRef.current.currentTime = value;
   }
 
+  function beginCaptionInteraction(event: ReactPointerEvent<HTMLElement>, mode: "move" | "resize") {
+    const frame = phoneScreenRef.current?.getBoundingClientRect();
+    if (!frame) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragStateRef.current = {
+      mode,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: captionX,
+      startY: captionY,
+      startWidth: captionWidth,
+      startFontSize: fontSize,
+      frameWidth: frame.width,
+      frameHeight: frame.height,
+    };
+  }
+
+  function moveCaption(event: ReactPointerEvent<HTMLElement>) {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    const deltaX = event.clientX - drag.startClientX;
+    const deltaY = event.clientY - drag.startClientY;
+    if (drag.mode === "move") {
+      setCaptionX(clamp(drag.startX + (deltaX / drag.frameWidth) * 100, 10, 90));
+      setCaptionY(clamp(drag.startY + (deltaY / drag.frameHeight) * 100, 14, 90));
+      setPosition("custom");
+    } else {
+      setCaptionWidth(clamp(drag.startWidth + (deltaX / drag.frameWidth) * 160, 42, 94));
+      setFontSize(clamp(Math.round(drag.startFontSize + deltaY * 0.18), 22, 52));
+    }
+  }
+
+  function endCaptionInteraction() {
+    dragStateRef.current = null;
+  }
+
+  function moveCaptionWithKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 3 : 1;
+    if (event.key === "ArrowLeft") setCaptionX((value) => clamp(value - step, 10, 90));
+    else if (event.key === "ArrowRight") setCaptionX((value) => clamp(value + step, 10, 90));
+    else if (event.key === "ArrowUp") setCaptionY((value) => clamp(value - step, 14, 90));
+    else if (event.key === "ArrowDown") setCaptionY((value) => clamp(value + step, 14, 90));
+    else return;
+    event.preventDefault();
+    setPosition("custom");
+  }
+
+  function setCaptionPosition(next: Exclude<Position, "custom">) {
+    setPosition(next);
+    setCaptionX(50);
+    setCaptionY(next === "top" ? 22 : next === "middle" ? 50 : 78);
+  }
+
   async function exportVideo() {
     const video = videoRef.current;
-    if (!video || !videoUrl) {
-      notify("Carica prima un video da esportare");
+    if (!video || !activeVideo) {
+      notify("Upload a video before exporting");
       return;
     }
     if (!("MediaRecorder" in window)) {
-      notify("Il browser non supporta l’esportazione demo");
+      notify("This browser does not support video export");
       return;
     }
     setExporting(true);
     const canvas = document.createElement("canvas");
     canvas.width = 720;
     canvas.height = 1280;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return setExporting(false);
-
-    const canvasStream = canvas.captureStream(30);
+    const maybeContext = canvas.getContext("2d");
+    if (!maybeContext) return setExporting(false);
+    const context: CanvasRenderingContext2D = maybeContext;
+    const stream = canvas.captureStream(30);
     const sourceStream = (video as HTMLVideoElement & { captureStream?: () => MediaStream }).captureStream?.();
-    sourceStream?.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
-    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-      ? "video/webm;codecs=vp9,opus"
-      : "video/webm";
-    const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 6_000_000 });
+    sourceStream?.getAudioTracks().forEach((track) => stream.addTrack(track));
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm";
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
     const parts: Blob[] = [];
     recorder.ondataavailable = (event) => event.data.size && parts.push(event.data);
     recorder.onstop = () => {
-      const blob = new Blob(parts, { type: mimeType });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(new Blob(parts, { type: mimeType }));
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${fileName.replace(/\.[^.]+$/, "") || "reel"}-sottotitoli.webm`;
+      anchor.download = `${activeVideo.name.replace(/\.[^.]+$/, "") || "reel"}-captions.webm`;
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       setExporting(false);
-      notify("Esportazione completata");
+      notify("Export complete");
     };
+
+    function drawCaption(time: number) {
+      const index = Math.max(0, cues.findIndex((cue) => time >= cue.start && time < cue.end));
+      const chunk = chunkForIndex(cues, index);
+      if (!chunk.words.length) return;
+      const size = fontSize * 1.62;
+      const rendered = chunk.words.map((cue) => (uppercase ? cue.word.toUpperCase() : cue.word));
+      context.font = `900 ${size}px Arial, sans-serif`;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      const gap = 17;
+      const widths = rendered.map((word) => context.measureText(word).width);
+      const total = widths.reduce((sum, item) => sum + item, 0) + gap * (rendered.length - 1);
+      const centerX = canvas.width * captionX / 100;
+      const centerY = canvas.height * captionY / 100;
+      if (preset === "boxed") {
+        context.fillStyle = "rgba(5,6,8,.82)";
+        context.beginPath();
+        context.roundRect(centerX - total / 2 - 22, centerY - size * .78, total + 44, size * 1.5, 18);
+        context.fill();
+      }
+      let cursor = centerX - total / 2;
+      rendered.forEach((word, wordIndex) => {
+        const globalIndex = chunk.offset + wordIndex;
+        const wordCenter = cursor + widths[wordIndex] / 2;
+        if (globalIndex === index && activeStyle === "background") {
+          context.fillStyle = activeColor;
+          context.beginPath();
+          context.roundRect(wordCenter - widths[wordIndex] / 2 - 10, centerY - size * .67, widths[wordIndex] + 20, size * 1.25, 12);
+          context.fill();
+        }
+        if (preset === "impact") {
+          context.lineWidth = 11;
+          context.strokeStyle = "rgba(0,0,0,.88)";
+          context.strokeText(word, wordCenter, centerY);
+        }
+        context.fillStyle = globalIndex === index ? (activeStyle === "background" ? "#111315" : activeColor) : textColor;
+        context.fillText(word, wordCenter, centerY);
+        cursor += widths[wordIndex] + gap;
+      });
+    }
 
     const draw = () => {
       if (video.paused || video.ended) return;
@@ -175,53 +389,14 @@ export default function Home() {
       let height = canvas.height;
       let x = 0;
       let y = 0;
-      if (videoRatio > canvasRatio) {
-        width = canvas.height * videoRatio;
-        x = (canvas.width - width) / 2;
-      } else {
-        height = canvas.width / videoRatio;
-        y = (canvas.height - height) / 2;
-      }
-      ctx.fillStyle = "#07080a";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(video, x, y, width, height);
-      drawCaption(ctx, video.currentTime, canvas.width, canvas.height);
+      if (videoRatio > canvasRatio) { width = canvas.height * videoRatio; x = (canvas.width - width) / 2; }
+      else { height = canvas.width / videoRatio; y = (canvas.height - height) / 2; }
+      context.fillStyle = "#07080a";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(video, x, y, width, height);
+      drawCaption(video.currentTime);
       requestAnimationFrame(draw);
     };
-
-    function drawCaption(context: CanvasRenderingContext2D, time: number, width: number, height: number) {
-      const index = Math.max(0, cues.findIndex((cue) => time >= cue.start && time < cue.end));
-      const chunk = chunkForIndex(cues, index);
-      const words = chunk.words;
-      if (!words.length) return;
-      const size = fontSize * 1.62;
-      const rendered = words.map((cue) => (uppercase ? cue.word.toUpperCase() : cue.word));
-      context.font = `900 ${size}px Arial, sans-serif`;
-      context.textAlign = "center";
-      context.textBaseline = "middle";
-      const gap = 17;
-      const widths = rendered.map((word) => context.measureText(word).width);
-      const total = widths.reduce((sum, item) => sum + item, 0) + gap * (words.length - 1);
-      const centerY = position === "top" ? height * 0.2 : position === "middle" ? height * 0.5 : height * 0.78;
-      if (preset === "boxed") {
-        context.fillStyle = "rgba(5, 6, 8, .82)";
-        context.beginPath();
-        context.roundRect((width - total) / 2 - 22, centerY - size * 0.78, total + 44, size * 1.5, 18);
-        context.fill();
-      }
-      let cursor = (width - total) / 2;
-      rendered.forEach((word, wordIndex) => {
-        const globalIndex = chunk.offset + wordIndex;
-        context.lineWidth = preset === "impact" ? 11 : 0;
-        context.strokeStyle = "rgba(0,0,0,.88)";
-        const centerX = cursor + widths[wordIndex] / 2;
-        if (preset === "impact") context.strokeText(word, centerX, centerY);
-        context.fillStyle = globalIndex === index ? activeColor : textColor;
-        context.fillText(word, centerX, centerY);
-        cursor += widths[wordIndex] + gap;
-      });
-    }
-
     video.pause();
     video.currentTime = 0;
     recorder.start(1000);
@@ -230,45 +405,29 @@ export default function Home() {
     draw();
   }
 
-  const captionClass = `caption caption-${position} caption-${preset}`;
+  const captionClass = `caption caption-${preset} active-${activeStyle}`;
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <a className="brand" href="#" aria-label="ReelType home">
-          <span className="brand-mark">R</span>
-          <span>ReelType</span>
-          <span className="beta">BETA</span>
+          <span className="brand-mark">R</span><span>ReelType</span><span className="beta">BETA</span>
         </a>
-        <div className="top-actions">
-          <span className="autosave"><i /> Salvato</span>
-          <button className="ghost-button" onClick={() => notify("Condivisione disponibile presto")}>Condividi</button>
-          <button className="export-button" onClick={exportVideo} disabled={exporting}>
-            {exporting ? <span className="spinner" /> : <span aria-hidden>↗</span>}
-            {exporting ? "Esportazione…" : "Esporta video"}
-          </button>
-        </div>
+        <button className="export-button" onClick={exportVideo} disabled={exporting || !activeVideo}>
+          {exporting ? <span className="spinner" /> : <span aria-hidden>↗</span>}
+          {exporting ? "Exporting…" : "Export video"}
+        </button>
       </header>
 
       <section className="workspace">
         <aside className="left-panel panel">
           <div className="panel-heading">
-            <div>
-              <span className="eyebrow">STEP 1</span>
-              <h1>Il tuo Reel</h1>
-            </div>
-            {videoUrl && <button className="icon-button" onClick={() => fileInputRef.current?.click()} aria-label="Sostituisci video">↻</button>}
+            <div><span className="eyebrow">STEP 1</span><h1>Your videos</h1></div>
+            {videos.length > 0 && <button className="icon-button" onClick={() => fileInputRef.current?.click()} aria-label="Add more videos">＋</button>}
           </div>
-
-          <input
-            ref={fileInputRef}
-            className="sr-only"
-            type="file"
-            accept="video/*"
-            onChange={(event: ChangeEvent<HTMLInputElement>) => loadFile(event.target.files?.[0])}
-          />
+          <input ref={fileInputRef} className="sr-only" type="file" accept="video/*" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => loadFiles(event.target.files || undefined)} />
           <div
-            className={`dropzone ${isDragging ? "is-dragging" : ""} ${videoUrl ? "has-file" : ""}`}
+            className={`dropzone ${isDragging ? "is-dragging" : ""} ${videos.length ? "compact" : ""}`}
             onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDrop}
@@ -278,177 +437,98 @@ export default function Home() {
             onKeyDown={(event) => event.key === "Enter" && fileInputRef.current?.click()}
           >
             <span className="upload-icon">↑</span>
-            <strong>{videoUrl ? fileName : "Trascina qui il tuo video"}</strong>
-            <span>{videoUrl ? "Clicca per sostituirlo" : "oppure clicca per scegliere"}</span>
-            {!videoUrl && <small>MP4, MOV o WebM · max 90 sec</small>}
+            <strong>Drop one or more videos here</strong>
+            <span>or click to browse</span>
+            {!videos.length && <small>MP4, MOV or WebM · no fixed duration limit</small>}
           </div>
 
-          <div className="section-title">
-            <div>
-              <span className="eyebrow">STEP 2</span>
-              <h2>Testo parlato</h2>
+          {videos.length > 0 && (
+            <div className="video-list" aria-label="Uploaded videos">
+              {videos.map((project, index) => (
+                <div key={project.id} className={`video-item ${project.id === activeVideoId ? "selected" : ""}`}>
+                  <button className="video-select" onClick={() => selectVideo(project)}>
+                    <span className="video-number">{index + 1}</span>
+                    <span className="video-info"><strong>{project.name}</strong><small>{project.status === "processing" ? `${project.progress}% · Transcribing` : project.status === "ready" ? `${project.cues.length} words ready` : project.status === "error" ? "Needs attention" : "Ready to start"}</small></span>
+                  </button>
+                  <button className="video-remove" onClick={() => removeVideo(project.id)} aria-label={`Remove ${project.name}`}>×</button>
+                </div>
+              ))}
             </div>
-            <span className="language-pill">IT⌄</span>
+          )}
+
+          <div className="section-title">
+            <div><span className="eyebrow">STEP 2</span><h2>AI transcription</h2></div>
+            <span className="language-pill">AUTO</span>
           </div>
-          <textarea
-            value={transcript}
-            onChange={(event) => setTranscript(event.target.value)}
-            aria-label="Testo dei sottotitoli"
-          />
-          <div className="text-meta">
-            <span>{transcript.trim().split(/\s+/).filter(Boolean).length} parole</span>
-            <span>Correggi il testo prima di generare</span>
+          <div className={`transcription-card status-${transcriptionStatus}`}>
+            {transcriptionStatus === "idle" && <><span className="transcription-icon">⌁</span><strong>Upload or select a video</strong><p>Whisper will extract the words and their timing automatically.</p></>}
+            {transcriptionStatus === "processing" && <><span className="ai-loader"><i /><i /><i /></span><strong>{transcriptionMessage || "Whisper is transcribing…"}</strong><div className="model-progress"><i style={{ width: `${transcriptionProgress}%` }} /></div><p>{transcriptionProgress}% · You can style the captions while you wait</p></>}
+            {transcriptionStatus === "ready" && <><span className="transcription-done">✓</span><strong>Transcription complete</strong><p className="transcript-preview">{transcript}</p><small>{cues.length} words · word-level timestamps</small></>}
+            {transcriptionStatus === "error" && <><span className="transcription-error">!</span><strong>Transcription failed</strong><p>{transcriptionError}</p><button onClick={() => activeVideo && transcribeVideo(activeVideo)} disabled={anyVideoProcessing}>Try again</button></>}
           </div>
-          <button className="generate-button" onClick={generateSubtitles}>
-            <span>✦</span> Genera sottotitoli
-          </button>
-          <p className="demo-note">Demo rapida: le parole vengono distribuite sulla durata del video.</p>
+          <p className="demo-note">Your videos stay on this device. Whisper runs inside the browser.</p>
         </aside>
 
         <section className="stage">
-          <div className="stage-topline">
-            <span>ANTEPRIMA</span>
-            <span className="ratio-pill">9:16 · REEL</span>
-          </div>
+          <div className="stage-topline"><span>PREVIEW</span><span className="ratio-pill">9:16 · REEL</span></div>
           <div className="phone-frame">
-            <div className="phone-screen">
+            <div className="phone-screen" ref={phoneScreenRef}>
               {videoUrl ? (
                 <video
+                  key={activeVideoId}
                   ref={videoRef}
                   src={videoUrl}
                   playsInline
-                  onLoadedMetadata={(event) => {
-                    const nextDuration = event.currentTarget.duration || 18;
-                    setDuration(nextDuration);
-                    setCues(createCues(transcript, nextDuration));
-                  }}
+                  onLoadedMetadata={(event) => updateVideo(activeVideoId || "", { duration: event.currentTarget.duration || 18 })}
                   onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
                   onPlay={() => setIsPlaying(true)}
                   onPause={() => setIsPlaying(false)}
                   onEnded={() => setIsPlaying(false)}
                 />
               ) : (
-                <div className="demo-visual">
-                  <div className="orb orb-one" />
-                  <div className="orb orb-two" />
-                  <div className="demo-person">R</div>
-                  <span className="demo-label">CARICA UN REEL</span>
-                </div>
+                <div className="demo-visual"><div className="orb orb-one" /><div className="orb orb-two" /><div className="demo-person">R</div><span className="demo-label">UPLOAD A REEL</span></div>
               )}
-              <div className={captionClass} style={{ fontSize, color: textColor }}>
+              <div
+                className={captionClass}
+                style={{ left: `${captionX}%`, top: `${captionY}%`, width: `${captionWidth}%`, fontSize, color: textColor }}
+                onPointerDown={(event) => beginCaptionInteraction(event, "move")}
+                onPointerMove={moveCaption}
+                onPointerUp={endCaptionInteraction}
+                onPointerCancel={endCaptionInteraction}
+                onKeyDown={moveCaptionWithKeyboard}
+                role="group"
+                tabIndex={0}
+                aria-label="Caption box. Drag to move or use the arrow keys."
+              >
                 {visibleChunk.words.map((cue, index) => {
                   const globalIndex = visibleChunk.offset + index;
-                  return (
-                    <span
-                      key={`${cue.start}-${cue.word}`}
-                      className={globalIndex === activeIndex ? "active-word" : ""}
-                      style={globalIndex === activeIndex ? { color: activeColor } : undefined}
-                    >
-                      {uppercase ? cue.word.toUpperCase() : cue.word}
-                    </span>
-                  );
+                  return <span key={`${cue.start}-${cue.word}`} className={globalIndex === activeIndex ? "active-word" : ""} style={globalIndex === activeIndex ? (activeStyle === "background" ? { backgroundColor: activeColor, color: "#111315" } : { color: activeColor }) : undefined}>{uppercase ? cue.word.toUpperCase() : cue.word}</span>;
                 })}
+                <button className="caption-resize" onPointerDown={(event) => { event.stopPropagation(); beginCaptionInteraction(event, "resize"); }} aria-label="Drag to resize caption box">↘</button>
               </div>
-              <span className="safe-zone top-safe">SAFE ZONE</span>
-              <span className="safe-zone bottom-safe" />
+              <span className="safe-zone top-safe">SAFE ZONE</span><span className="safe-zone bottom-safe" />
             </div>
           </div>
+          <p className="direct-edit-hint">Drag the captions to move them · drag the corner to resize</p>
           <div className="player-controls">
-            <button className="play-button" onClick={togglePlayback} aria-label={isPlaying ? "Pausa" : "Riproduci"}>
-              {isPlaying ? "Ⅱ" : "▶"}
-            </button>
+            <button className="play-button" onClick={togglePlayback} disabled={!activeVideo} aria-label={isPlaying ? "Pause" : "Play"}>{isPlaying ? "Ⅱ" : "▶"}</button>
             <span className="timecode">{formatTime(currentTime)}</span>
-            <input
-              className="timeline"
-              type="range"
-              min="0"
-              max={duration || 18}
-              step="0.01"
-              value={Math.min(currentTime, duration || 18)}
-              onChange={(event) => seek(Number(event.target.value))}
-              style={{ "--progress": `${(currentTime / (duration || 18)) * 100}%` } as React.CSSProperties}
-              aria-label="Posizione video"
-            />
+            <input className="timeline" type="range" min="0" max={duration} step="0.01" value={Math.min(currentTime, duration)} onChange={(event) => seek(Number(event.target.value))} style={{ "--progress": `${(currentTime / duration) * 100}%` } as React.CSSProperties} aria-label="Video position" />
             <span className="timecode">{formatTime(duration)}</span>
           </div>
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading">
-            <div>
-              <span className="eyebrow">STEP 3</span>
-              <h2>Personalizza</h2>
-            </div>
-            <button className="reset-button" onClick={() => {
-              setPreset("impact"); setPosition("bottom"); setFontSize(34);
-              setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setUppercase(false);
-            }}>Reset</button>
-          </div>
-
-          <div className="control-group">
-            <label>Stile</label>
-            <div className="preset-grid">
-              {(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => (
-                <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}>
-                  <span className={`preset-preview preview-${item}`}>Aa</span>
-                  <span>{item === "impact" ? "Impact" : item === "minimal" ? "Pulito" : "Box"}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="control-group">
-            <label>Posizione</label>
-            <div className="segmented">
-              {(["top", "middle", "bottom"] as Position[]).map((item) => (
-                <button key={item} className={position === item ? "selected" : ""} onClick={() => setPosition(item)}>
-                  <span className={`position-icon position-${item}`}><i /></span>
-                  {item === "top" ? "Alto" : item === "middle" ? "Centro" : "Basso"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="control-group">
-            <div className="range-label"><label htmlFor="font-size">Dimensione</label><output>{fontSize}px</output></div>
-            <input id="font-size" className="size-slider" type="range" min="22" max="52" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} />
-          </div>
-
-          <div className="control-group color-group">
-            <label>Colori</label>
-            <div className="color-row">
-              <span>Testo</span>
-              <label className="color-control">
-                <i style={{ background: textColor }} />
-                <span>{textColor}</span>
-                <input type="color" value={textColor} onChange={(event) => setTextColor(event.target.value.toUpperCase())} aria-label="Colore testo" />
-              </label>
-            </div>
-            <div className="color-row">
-              <span>Parola attiva</span>
-              <label className="color-control">
-                <i style={{ background: activeColor }} />
-                <span>{activeColor}</span>
-                <input type="color" value={activeColor} onChange={(event) => setActiveColor(event.target.value.toUpperCase())} aria-label="Colore parola attiva" />
-              </label>
-            </div>
-          </div>
-
-          <div className="control-group toggle-row">
-            <div>
-              <label>Maiuscolo</label>
-              <span>Più impatto nel feed</span>
-            </div>
-            <button className={`toggle ${uppercase ? "on" : ""}`} onClick={() => setUppercase((value) => !value)} aria-pressed={uppercase}><i /></button>
-          </div>
-
-          <div className="tip-card">
-            <span>✦</span>
-            <p><strong>Consiglio Reel</strong>Il giallo acceso aumenta la leggibilità mentre l’utente scorre il feed.</p>
-          </div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
+          <div className="control-group"><label>Active word</label><div className="highlight-options"><button className={activeStyle === "color" ? "selected" : ""} onClick={() => setActiveStyle("color")}><span className="highlight-color-preview">WORD</span><small>Text color</small></button><button className={activeStyle === "background" ? "selected" : ""} onClick={() => setActiveStyle("background")}><span className="highlight-box-preview">WORD</span><small>Rounded box</small></button></div></div>
+          <div className="control-group"><label>Quick position</label><div className="segmented">{(["top", "middle", "bottom"] as const).map((item) => <button key={item} className={position === item ? "selected" : ""} onClick={() => setCaptionPosition(item)}><span className={`position-icon position-${item}`}><i /></span>{item === "top" ? "Top" : item === "middle" ? "Center" : "Bottom"}</button>)}</div></div>
+          <div className="control-group"><div className="range-label"><label htmlFor="font-size">Text size</label><output>{fontSize}px</output></div><input id="font-size" className="size-slider" type="range" min="22" max="52" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} /></div>
+          <div className="control-group color-group"><label>Colors</label><div className="color-row"><span>Text</span><label className="color-control"><i style={{ background: textColor }} /><span>{textColor}</span><input type="color" value={textColor} onChange={(event) => setTextColor(event.target.value.toUpperCase())} aria-label="Text color" /></label></div><div className="color-row"><span>Active word</span><label className="color-control"><i style={{ background: activeColor }} /><span>{activeColor}</span><input type="color" value={activeColor} onChange={(event) => setActiveColor(event.target.value.toUpperCase())} aria-label="Active word color" /></label></div></div>
+          <div className="control-group toggle-row"><div><label>Uppercase</label><span>Add more impact in the feed</span></div><button className={`toggle ${uppercase ? "on" : ""}`} onClick={() => setUppercase((value) => !value)} aria-pressed={uppercase} aria-label="Toggle uppercase"><i /></button></div>
+          <div className="tip-card"><span>✦</span><p><strong>Direct editing</strong>Drag the caption layer inside the preview to place it exactly where you want.</p></div>
         </aside>
       </section>
-
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </main>
   );
