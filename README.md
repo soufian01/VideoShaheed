@@ -18,12 +18,28 @@ nessun video viene caricato su un server e non serve una chiave API.
 
 ## Requisiti
 
-- Node.js 22.13 o successivo;
 - Chrome o Edge aggiornato consigliati per WebGPU;
 - connessione internet al primo utilizzo, necessaria per scaricare il modello;
 - memoria sufficiente per decodificare il video nel browser.
 
+## Avvio facile su Windows
+
+Non occorre installare Node.js manualmente:
+
+1. scarica lo ZIP completo del progetto da GitHub;
+2. estrai lo ZIP in una cartella;
+3. fai doppio clic su `Avvia-VideoShaheed.bat`;
+4. lascia aperta la finestra nera mentre usi l'app.
+
+Al primo avvio il programma scarica una copia portatile di Node.js e installa i
+componenti necessari dentro la cartella del progetto. Non richiede permessi di
+amministratore. Quando l'app è pronta, il browser si apre automaticamente su
+`http://localhost:3000`. Gli avvii successivi sono più veloci. Chiudendo la
+finestra nera si arresta anche il server locale.
+
 ## Avvio locale
+
+Per sviluppatori con Node.js 22.13 o successivo:
 
 ```bash
 npm install
@@ -41,7 +57,7 @@ npm run build
 ## Come funziona
 
 Il browser estrae l'audio dal video, lo converte a 16 kHz mono e lo invia a un
-Web Worker. Il worker carica `onnx-community/whisper-tiny` tramite
+Web Worker. Il worker carica `onnx-community/whisper-tiny_timestamped` tramite
 Transformers.js, genera il testo e restituisce i timestamp delle singole parole.
 Il modello viene memorizzato nella cache del browser dopo il primo download.
 
