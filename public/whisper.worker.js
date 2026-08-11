@@ -2,6 +2,9 @@ import { env, pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transfo
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
+// Keep model downloads same-origin. The Cloudflare Worker forwards this fixed
+// model path so browsers are not blocked by Hugging Face CORS responses.
+env.remoteHost = `${self.location.origin}/hf-models/`;
 
 let transcriber = null;
 

@@ -29,6 +29,38 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
+    const whisperModelPrefix = "/hf-models/onnx-community/whisper-tiny/";
+    if (url.pathname.startsWith(whisperModelPrefix)) {
+      const modelPath = url.pathname.slice(whisperModelPrefix.length);
+      if (!modelPath || modelPath.includes("..")) {
+        return new Response("Invalid model path", { status: 400 });
+      }
+
+      const upstreamUrl = new URL(
+        `https://huggingface.co/onnx-community/whisper-tiny/${modelPath}`,
+      );
+      upstreamUrl.search = url.search;
+      const upstreamHeaders = new Headers();
+      for (const header of ["accept", "if-none-match", "range"]) {
+        const value = request.headers.get(header);
+        if (value) upstreamHeaders.set(header, value);
+      }
+
+      const upstream = await fetch(upstreamUrl, {
+        headers: upstreamHeaders,
+        redirect: "follow",
+      });
+      const responseHeaders = new Headers(upstream.headers);
+      responseHeaders.delete("set-cookie");
+      responseHeaders.set("Access-Control-Allow-Origin", url.origin);
+      responseHeaders.set("Vary", "Origin");
+      return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: responseHeaders,
+      });
+    }
+
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
       return handleImageOptimization(request, {
