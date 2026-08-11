@@ -103,7 +103,7 @@ export default function Home() {
   useEffect(() => { videosRef.current = videos; }, [videos]);
 
   useEffect(() => {
-    const worker = new Worker(new URL("./whisper.worker.ts", import.meta.url), { type: "module" });
+    const worker = new Worker("/whisper.worker.js", { type: "module" });
     whisperWorkerRef.current = worker;
     worker.onmessage = (event: MessageEvent<{
       type: "status" | "result" | "error";
