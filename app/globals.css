@@ -158,6 +158,12 @@ textarea:focus { border-color: #a6b84b; background: white; outline: none; box-sh
 .range-label label { margin: 0; }
 .range-label output { color: #858885; font-size: 9px; }
 .size-slider { width: 100%; margin: 14px 0 3px; background: linear-gradient(to right, var(--ink) 0 40%, #deded9 40% 100%); }
+.typography-group > label { margin-bottom: 8px; }
+.font-select { width: 100%; height: 38px; padding: 0 35px 0 11px; border: 1px solid #deded9; border-radius: 8px; background: #fafaf8; color: #383b3a; font-size: 10px; font-weight: 700; cursor: pointer; }
+.size-heading { margin-top: 17px; }
+.size-number { height: 29px; padding: 0 7px; display: flex !important; align-items: center; gap: 3px; border: 1px solid #deded9; border-radius: 7px; background: #fafaf8; color: #858885 !important; font-size: 9px !important; font-weight: 600 !important; }
+.size-number input { width: 28px; padding: 0; border: 0; outline: 0; background: transparent; color: #383b3a; font: inherit; font-weight: 800; text-align: right; }
+.size-number input::-webkit-inner-spin-button { margin: 0; }
 .color-group > label { margin-bottom: 6px; }
 .color-row { min-height: 40px; display: flex; align-items: center; justify-content: space-between; color: #797c7c; font-size: 10px; }
 .color-control { width: 94px; height: 30px; padding: 0 9px; position: relative; display: flex; align-items: center; gap: 7px; border: 1px solid #deded9; border-radius: 7px; background: #fafaf8; color: #55585a; font-family: monospace; font-size: 8px; cursor: pointer; }

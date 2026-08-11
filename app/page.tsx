@@ -6,6 +6,7 @@ type WordCue = { word: string; start: number; end: number };
 type Position = "top" | "middle" | "bottom" | "custom";
 type StylePreset = "impact" | "minimal" | "boxed";
 type ActiveStyle = "color" | "background";
+type FontChoice = "impact" | "arial-black" | "arial" | "georgia" | "courier";
 type TranscriptionStatus = "idle" | "processing" | "ready" | "error";
 type VideoProject = {
   id: string;
@@ -22,6 +23,13 @@ type VideoProject = {
 };
 
 const SAMPLE_TEXT = "Make every word impossible to miss.";
+const FONT_OPTIONS: Array<{ value: FontChoice; label: string; family: string }> = [
+  { value: "impact", label: "Impact", family: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
+  { value: "arial-black", label: "Arial Black", family: "'Arial Black', Arial, sans-serif" },
+  { value: "arial", label: "Clean Sans", family: "Arial, Helvetica, sans-serif" },
+  { value: "georgia", label: "Elegant Serif", family: "Georgia, 'Times New Roman', serif" },
+  { value: "courier", label: "Typewriter", family: "'Courier New', Courier, monospace" },
+];
 
 function formatTime(seconds: number) {
   if (!Number.isFinite(seconds)) return "0:00";
@@ -58,6 +66,7 @@ export default function Home() {
   const [captionWidth, setCaptionWidth] = useState(86);
   const [preset, setPreset] = useState<StylePreset>("impact");
   const [fontSize, setFontSize] = useState(34);
+  const [fontChoice, setFontChoice] = useState<FontChoice>("impact");
   const [textColor, setTextColor] = useState("#FFFFFF");
   const [activeColor, setActiveColor] = useState("#D9FF43");
   const [activeStyle, setActiveStyle] = useState<ActiveStyle>("color");
@@ -99,6 +108,7 @@ export default function Home() {
   );
   const visibleChunk = useMemo(() => chunkForIndex(cues, activeIndex), [cues, activeIndex]);
   const anyVideoProcessing = videos.some((video) => video.status === "processing");
+  const selectedFont = FONT_OPTIONS.find((font) => font.value === fontChoice) ?? FONT_OPTIONS[0];
 
   useEffect(() => { videosRef.current = videos; }, [videos]);
 
@@ -346,7 +356,7 @@ export default function Home() {
       if (!chunk.words.length) return;
       const size = fontSize * 1.62;
       const rendered = chunk.words.map((cue) => (uppercase ? cue.word.toUpperCase() : cue.word));
-      context.font = `900 ${size}px Arial, sans-serif`;
+      context.font = `900 ${size}px ${selectedFont.family}`;
       context.textAlign = "center";
       context.textBaseline = "middle";
       const gap = 17;
@@ -490,7 +500,7 @@ export default function Home() {
               )}
               <div
                 className={captionClass}
-                style={{ left: `${captionX}%`, top: `${captionY}%`, width: `${captionWidth}%`, fontSize, color: textColor }}
+                style={{ left: `${captionX}%`, top: `${captionY}%`, width: `${captionWidth}%`, fontSize, fontFamily: selectedFont.family, color: textColor }}
                 onPointerDown={(event) => beginCaptionInteraction(event, "move")}
                 onPointerMove={moveCaption}
                 onPointerUp={endCaptionInteraction}
@@ -519,11 +529,21 @@ export default function Home() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
           <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
           <div className="control-group"><label>Active word</label><div className="highlight-options"><button className={activeStyle === "color" ? "selected" : ""} onClick={() => setActiveStyle("color")}><span className="highlight-color-preview">WORD</span><small>Text color</small></button><button className={activeStyle === "background" ? "selected" : ""} onClick={() => setActiveStyle("background")}><span className="highlight-box-preview">WORD</span><small>Rounded box</small></button></div></div>
           <div className="control-group"><label>Quick position</label><div className="segmented">{(["top", "middle", "bottom"] as const).map((item) => <button key={item} className={position === item ? "selected" : ""} onClick={() => setCaptionPosition(item)}><span className={`position-icon position-${item}`}><i /></span>{item === "top" ? "Top" : item === "middle" ? "Center" : "Bottom"}</button>)}</div></div>
-          <div className="control-group"><div className="range-label"><label htmlFor="font-size">Text size</label><output>{fontSize}px</output></div><input id="font-size" className="size-slider" type="range" min="22" max="52" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} /></div>
+          <div className="control-group typography-group">
+            <label htmlFor="font-family">Font</label>
+            <select id="font-family" className="font-select" value={fontChoice} onChange={(event) => setFontChoice(event.target.value as FontChoice)}>
+              {FONT_OPTIONS.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}
+            </select>
+            <div className="range-label size-heading">
+              <label htmlFor="font-size">Text size</label>
+              <label className="size-number"><input aria-label="Text size in pixels" type="number" min="22" max="52" value={fontSize} onChange={(event) => setFontSize(clamp(Number(event.target.value), 22, 52))} /><span>px</span></label>
+            </div>
+            <input id="font-size" className="size-slider" type="range" min="22" max="52" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} style={{ "--progress": `${((fontSize - 22) / 30) * 100}%` } as React.CSSProperties} />
+          </div>
           <div className="control-group color-group"><label>Colors</label><div className="color-row"><span>Text</span><label className="color-control"><i style={{ background: textColor }} /><span>{textColor}</span><input type="color" value={textColor} onChange={(event) => setTextColor(event.target.value.toUpperCase())} aria-label="Text color" /></label></div><div className="color-row"><span>Active word</span><label className="color-control"><i style={{ background: activeColor }} /><span>{activeColor}</span><input type="color" value={activeColor} onChange={(event) => setActiveColor(event.target.value.toUpperCase())} aria-label="Active word color" /></label></div></div>
           <div className="control-group toggle-row"><div><label>Uppercase</label><span>Add more impact in the feed</span></div><button className={`toggle ${uppercase ? "on" : ""}`} onClick={() => setUppercase((value) => !value)} aria-pressed={uppercase} aria-label="Toggle uppercase"><i /></button></div>
           <div className="tip-card"><span>✦</span><p><strong>Direct editing</strong>Drag the caption layer inside the preview to place it exactly where you want.</p></div>
