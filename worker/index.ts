@@ -29,7 +29,7 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    const whisperModelPrefix = "/hf-models/onnx-community/whisper-tiny/";
+    const whisperModelPrefix = "/hf-models/onnx-community/whisper-tiny_timestamped/";
     if (url.pathname.startsWith(whisperModelPrefix)) {
       const modelPath = url.pathname.slice(whisperModelPrefix.length);
       if (!modelPath || modelPath.includes("..")) {
@@ -37,7 +37,7 @@ const worker = {
       }
 
       const upstreamUrl = new URL(
-        `https://huggingface.co/onnx-community/whisper-tiny/${modelPath}`,
+        `https://huggingface.co/onnx-community/whisper-tiny_timestamped/${modelPath}`,
       );
       upstreamUrl.search = url.search;
       const upstreamHeaders = new Headers();

@@ -27,7 +27,7 @@ self.addEventListener("message", async (event) => {
       });
       transcriber = await pipeline(
         "automatic-speech-recognition",
-        "onnx-community/whisper-tiny",
+        "onnx-community/whisper-tiny_timestamped",
         {
           device: hasWebGpu ? "webgpu" : "wasm",
           dtype: "q8",
@@ -50,7 +50,7 @@ self.addEventListener("message", async (event) => {
     const result = await transcriber(event.data.audio, {
       task: "transcribe",
       return_timestamps: "word",
-      chunk_length_s: 30,
+      chunk_length_s: 29,
       stride_length_s: 5,
     });
 
