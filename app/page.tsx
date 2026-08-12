@@ -50,6 +50,29 @@ function chunkForIndex(cues: WordCue[], activeIndex: number) {
   return { words: cues.slice(offset, offset + 5), offset };
 }
 
+function cueIndexAtTime(cues: WordCue[], time: number) {
+  if (!cues.length || time < cues[0].start) return -1;
+  let index = cues.length - 1;
+  for (let cueIndex = 0; cueIndex < cues.length; cueIndex += 1) {
+    if (cues[cueIndex].start > time) {
+      index = cueIndex - 1;
+      break;
+    }
+  }
+  const cue = cues[index];
+  const nextStart = cues[index + 1]?.start ?? Number.POSITIVE_INFINITY;
+  const detectedEnd = cue.end > cue.start ? cue.end : cue.start + 0.4;
+  const visibleEnd = Math.min(nextStart, detectedEnd + 0.14);
+  return time <= visibleEnd ? index : -1;
+}
+
+function displayCueIndexAtTime(cues: WordCue[], time: number, activeIndex: number) {
+  if (!cues.length) return -1;
+  if (activeIndex >= 0) return activeIndex;
+  const nextIndex = cues.findIndex((cue) => cue.start > time);
+  return nextIndex === -1 ? cues.length - 1 : nextIndex;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -67,6 +90,7 @@ export default function Home() {
   const [preset, setPreset] = useState<StylePreset>("impact");
   const [fontSize, setFontSize] = useState(34);
   const [fontChoice, setFontChoice] = useState<FontChoice>("impact");
+  const [timingOffset, setTimingOffset] = useState(0);
   const [textColor, setTextColor] = useState("#FFFFFF");
   const [activeColor, setActiveColor] = useState("#D9FF43");
   const [activeStyle, setActiveStyle] = useState<ActiveStyle>("color");
@@ -102,15 +126,45 @@ export default function Home() {
   const transcriptionProgress = activeVideo?.progress ?? 0;
   const transcriptionMessage = activeVideo?.message ?? "";
   const transcriptionError = activeVideo?.error ?? "";
-  const activeIndex = useMemo(
-    () => Math.max(0, cues.findIndex((cue) => currentTime >= cue.start && currentTime < cue.end)),
-    [cues, currentTime],
-  );
-  const visibleChunk = useMemo(() => chunkForIndex(cues, activeIndex), [cues, activeIndex]);
+  const captionTime = Math.max(0, currentTime - timingOffset);
+  const activeIndex = useMemo(() => cueIndexAtTime(cues, captionTime), [cues, captionTime]);
+  const displayIndex = useMemo(() => displayCueIndexAtTime(cues, captionTime, activeIndex), [cues, captionTime, activeIndex]);
+  const visibleChunk = useMemo(() => chunkForIndex(cues, displayIndex), [cues, displayIndex]);
   const anyVideoProcessing = videos.some((video) => video.status === "processing");
   const selectedFont = FONT_OPTIONS.find((font) => font.value === fontChoice) ?? FONT_OPTIONS[0];
 
   useEffect(() => { videosRef.current = videos; }, [videos]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !isPlaying) return;
+    let cancelled = false;
+    let animationFrame = 0;
+    let videoFrame = 0;
+
+    const syncWithAnimationFrame = () => {
+      if (cancelled) return;
+      setCurrentTime(video.currentTime);
+      animationFrame = window.requestAnimationFrame(syncWithAnimationFrame);
+    };
+
+    if ("requestVideoFrameCallback" in video) {
+      const syncWithVideoFrame: VideoFrameRequestCallback = (_now, metadata) => {
+        if (cancelled) return;
+        setCurrentTime(metadata.mediaTime);
+        videoFrame = video.requestVideoFrameCallback(syncWithVideoFrame);
+      };
+      videoFrame = video.requestVideoFrameCallback(syncWithVideoFrame);
+    } else {
+      animationFrame = window.requestAnimationFrame(syncWithAnimationFrame);
+    }
+
+    return () => {
+      cancelled = true;
+      if (videoFrame) video.cancelVideoFrameCallback(videoFrame);
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+    };
+  }, [isPlaying, activeVideoId]);
 
   useEffect(() => {
     const worker = new Worker("/whisper.worker.js", { type: "module" });
@@ -351,8 +405,10 @@ export default function Home() {
     };
 
     function drawCaption(time: number) {
-      const index = Math.max(0, cues.findIndex((cue) => time >= cue.start && time < cue.end));
-      const chunk = chunkForIndex(cues, index);
+      const adjustedTime = Math.max(0, time - timingOffset);
+      const index = cueIndexAtTime(cues, adjustedTime);
+      const displayIndex = displayCueIndexAtTime(cues, adjustedTime, index);
+      const chunk = chunkForIndex(cues, displayIndex);
       if (!chunk.words.length) return;
       const size = fontSize * 1.62;
       const rendered = chunk.words.map((cue) => (uppercase ? cue.word.toUpperCase() : cue.word));
@@ -529,7 +585,7 @@ export default function Home() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(0); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
           <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
           <div className="control-group"><label>Active word</label><div className="highlight-options"><button className={activeStyle === "color" ? "selected" : ""} onClick={() => setActiveStyle("color")}><span className="highlight-color-preview">WORD</span><small>Text color</small></button><button className={activeStyle === "background" ? "selected" : ""} onClick={() => setActiveStyle("background")}><span className="highlight-box-preview">WORD</span><small>Rounded box</small></button></div></div>
           <div className="control-group"><label>Quick position</label><div className="segmented">{(["top", "middle", "bottom"] as const).map((item) => <button key={item} className={position === item ? "selected" : ""} onClick={() => setCaptionPosition(item)}><span className={`position-icon position-${item}`}><i /></span>{item === "top" ? "Top" : item === "middle" ? "Center" : "Bottom"}</button>)}</div></div>
@@ -543,6 +599,11 @@ export default function Home() {
               <label className="size-number"><input aria-label="Text size in pixels" type="number" min="22" max="52" value={fontSize} onChange={(event) => setFontSize(clamp(Number(event.target.value), 22, 52))} /><span>px</span></label>
             </div>
             <input id="font-size" className="size-slider" type="range" min="22" max="52" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} style={{ "--progress": `${((fontSize - 22) / 30) * 100}%` } as React.CSSProperties} />
+          </div>
+          <div className="control-group timing-group">
+            <div className="range-label"><label htmlFor="caption-timing">Caption timing</label><output>{timingOffset > 0 ? "+" : ""}{timingOffset.toFixed(2)}s</output></div>
+            <input id="caption-timing" className="size-slider" type="range" min="-0.75" max="0.75" step="0.05" value={timingOffset} onChange={(event) => setTimingOffset(Number(event.target.value))} style={{ "--progress": `${((timingOffset + 0.75) / 1.5) * 100}%` } as React.CSSProperties} />
+            <p>Negative shows captions earlier · positive shows them later</p>
           </div>
           <div className="control-group color-group"><label>Colors</label><div className="color-row"><span>Text</span><label className="color-control"><i style={{ background: textColor }} /><span>{textColor}</span><input type="color" value={textColor} onChange={(event) => setTextColor(event.target.value.toUpperCase())} aria-label="Text color" /></label></div><div className="color-row"><span>Active word</span><label className="color-control"><i style={{ background: activeColor }} /><span>{activeColor}</span><input type="color" value={activeColor} onChange={(event) => setActiveColor(event.target.value.toUpperCase())} aria-label="Active word color" /></label></div></div>
           <div className="control-group toggle-row"><div><label>Uppercase</label><span>Add more impact in the feed</span></div><button className={`toggle ${uppercase ? "on" : ""}`} onClick={() => setUppercase((value) => !value)} aria-pressed={uppercase} aria-label="Toggle uppercase"><i /></button></div>

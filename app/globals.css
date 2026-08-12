@@ -164,6 +164,7 @@ textarea:focus { border-color: #a6b84b; background: white; outline: none; box-sh
 .size-number { height: 29px; padding: 0 7px; display: flex !important; align-items: center; gap: 3px; border: 1px solid #deded9; border-radius: 7px; background: #fafaf8; color: #858885 !important; font-size: 9px !important; font-weight: 600 !important; }
 .size-number input { width: 28px; padding: 0; border: 0; outline: 0; background: transparent; color: #383b3a; font: inherit; font-weight: 800; text-align: right; }
 .size-number input::-webkit-inner-spin-button { margin: 0; }
+.timing-group p { margin: 5px 0 0; color: #999c9a; font-size: 8px; line-height: 1.4; }
 .color-group > label { margin-bottom: 6px; }
 .color-row { min-height: 40px; display: flex; align-items: center; justify-content: space-between; color: #797c7c; font-size: 10px; }
 .color-control { width: 94px; height: 30px; padding: 0 9px; position: relative; display: flex; align-items: center; gap: 7px; border: 1px solid #deded9; border-radius: 7px; background: #fafaf8; color: #55585a; font-family: monospace; font-size: 8px; cursor: pointer; }
