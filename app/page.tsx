@@ -23,6 +23,9 @@ type VideoProject = {
 };
 
 const SAMPLE_TEXT = "Make every word impossible to miss.";
+// React paints shortly after requestVideoFrameCallback fires. Looking ahead by
+// roughly three frames keeps the highlighted word aligned with what is heard.
+const PREVIEW_RENDER_LEAD_SECONDS = 0.055;
 const FONT_OPTIONS: Array<{ value: FontChoice; label: string; family: string }> = [
   { value: "impact", label: "Impact", family: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
   { value: "arial-black", label: "Arial Black", family: "'Arial Black', Arial, sans-serif" },
@@ -62,7 +65,7 @@ function cueIndexAtTime(cues: WordCue[], time: number) {
   const cue = cues[index];
   const nextStart = cues[index + 1]?.start ?? Number.POSITIVE_INFINITY;
   const detectedEnd = cue.end > cue.start ? cue.end : cue.start + 0.4;
-  const visibleEnd = Math.min(nextStart, detectedEnd + 0.14);
+  const visibleEnd = Math.min(nextStart, detectedEnd + 0.06);
   return time <= visibleEnd ? index : -1;
 }
 
@@ -126,7 +129,7 @@ export default function Home() {
   const transcriptionProgress = activeVideo?.progress ?? 0;
   const transcriptionMessage = activeVideo?.message ?? "";
   const transcriptionError = activeVideo?.error ?? "";
-  const captionTime = Math.max(0, currentTime - timingOffset);
+  const captionTime = Math.max(0, currentTime + PREVIEW_RENDER_LEAD_SECONDS - timingOffset);
   const activeIndex = useMemo(() => cueIndexAtTime(cues, captionTime), [cues, captionTime]);
   const displayIndex = useMemo(() => displayCueIndexAtTime(cues, captionTime, activeIndex), [cues, captionTime, activeIndex]);
   const visibleChunk = useMemo(() => chunkForIndex(cues, displayIndex), [cues, displayIndex]);
@@ -602,7 +605,12 @@ export default function Home() {
           </div>
           <div className="control-group timing-group">
             <div className="range-label"><label htmlFor="caption-timing">Caption timing</label><output>{timingOffset > 0 ? "+" : ""}{timingOffset.toFixed(2)}s</output></div>
-            <input id="caption-timing" className="size-slider" type="range" min="-0.75" max="0.75" step="0.05" value={timingOffset} onChange={(event) => setTimingOffset(Number(event.target.value))} style={{ "--progress": `${((timingOffset + 0.75) / 1.5) * 100}%` } as React.CSSProperties} />
+            <input id="caption-timing" className="size-slider" type="range" min="-0.75" max="0.75" step="0.01" value={timingOffset} onChange={(event) => setTimingOffset(Number(event.target.value))} style={{ "--progress": `${((timingOffset + 0.75) / 1.5) * 100}%` } as React.CSSProperties} />
+            <div className="timing-nudges">
+              <button onClick={() => setTimingOffset((value) => clamp(Math.round((value - 0.01) * 100) / 100, -0.75, 0.75))}>Earlier −0.01s</button>
+              <button onClick={() => setTimingOffset(0)}>Reset</button>
+              <button onClick={() => setTimingOffset((value) => clamp(Math.round((value + 0.01) * 100) / 100, -0.75, 0.75))}>Later +0.01s</button>
+            </div>
             <p>Negative shows captions earlier · positive shows them later</p>
           </div>
           <div className="control-group color-group"><label>Colors</label><div className="color-row"><span>Text</span><label className="color-control"><i style={{ background: textColor }} /><span>{textColor}</span><input type="color" value={textColor} onChange={(event) => setTextColor(event.target.value.toUpperCase())} aria-label="Text color" /></label></div><div className="color-row"><span>Active word</span><label className="color-control"><i style={{ background: activeColor }} /><span>{activeColor}</span><input type="color" value={activeColor} onChange={(event) => setActiveColor(event.target.value.toUpperCase())} aria-label="Active word color" /></label></div></div>

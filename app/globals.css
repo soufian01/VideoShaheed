@@ -165,6 +165,9 @@ textarea:focus { border-color: #a6b84b; background: white; outline: none; box-sh
 .size-number input { width: 28px; padding: 0; border: 0; outline: 0; background: transparent; color: #383b3a; font: inherit; font-weight: 800; text-align: right; }
 .size-number input::-webkit-inner-spin-button { margin: 0; }
 .timing-group p { margin: 5px 0 0; color: #999c9a; font-size: 8px; line-height: 1.4; }
+.timing-nudges { margin-top: 7px; display: grid; grid-template-columns: 1fr auto 1fr; gap: 5px; }
+.timing-nudges button { min-height: 28px; padding: 4px 5px; border: 1px solid #deded9; border-radius: 6px; background: #fafaf8; color: #666966; font-size: 7px; font-weight: 700; cursor: pointer; }
+.timing-nudges button:hover { border-color: #adafa9; color: var(--ink); }
 .color-group > label { margin-bottom: 6px; }
 .color-row { min-height: 40px; display: flex; align-items: center; justify-content: space-between; color: #797c7c; font-size: 10px; }
 .color-control { width: 94px; height: 30px; padding: 0 9px; position: relative; display: flex; align-items: center; gap: 7px; border: 1px solid #deded9; border-radius: 7px; background: #fafaf8; color: #55585a; font-family: monospace; font-size: 8px; cursor: pointer; }
