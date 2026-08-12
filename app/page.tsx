@@ -7,6 +7,8 @@ type Position = "top" | "middle" | "bottom" | "custom";
 type StylePreset = "impact" | "minimal" | "boxed";
 type ActiveStyle = "color" | "background" | "underline" | "outline" | "scale";
 type FontChoice = "impact" | "arial-black" | "arial" | "arial-narrow" | "verdana" | "trebuchet" | "georgia" | "times" | "courier" | "comic";
+type EntryAnimation = "none" | "fade" | "pop" | "slide-up";
+type ExitAnimation = "none" | "fade" | "shrink" | "slide-down";
 type TranscriptionStatus = "idle" | "processing" | "ready" | "error";
 type VideoProject = {
   id: string;
@@ -114,11 +116,15 @@ export default function Home() {
   const [timingOffset, setTimingOffset] = useState(0);
   const [wordsPerFrame, setWordsPerFrame] = useState(5);
   const [showPunctuation, setShowPunctuation] = useState(true);
+  const [entryAnimation, setEntryAnimation] = useState<EntryAnimation>("pop");
+  const [exitAnimation, setExitAnimation] = useState<ExitAnimation>("fade");
   const [textColor, setTextColor] = useState("#FFFFFF");
   const [activeColor, setActiveColor] = useState("#D9FF43");
   const [activeStyle, setActiveStyle] = useState<ActiveStyle>("color");
   const [uppercase, setUppercase] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [isEditingTranscript, setIsEditingTranscript] = useState(false);
+  const [transcriptDraft, setTranscriptDraft] = useState("");
   const [toast, setToast] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -153,10 +159,20 @@ export default function Home() {
   const activeIndex = useMemo(() => cueIndexAtTime(cues, captionTime), [cues, captionTime]);
   const displayIndex = useMemo(() => displayCueIndexAtTime(cues, captionTime, activeIndex), [cues, captionTime, activeIndex]);
   const visibleChunk = useMemo(() => chunkForIndex(cues, displayIndex, wordsPerFrame), [cues, displayIndex, wordsPerFrame]);
+  const lastVisibleCue = visibleChunk.words[visibleChunk.words.length - 1];
+  const visibleCueEnd = lastVisibleCue
+    ? (lastVisibleCue.end > lastVisibleCue.start ? lastVisibleCue.end : lastVisibleCue.start + 0.4)
+    : 0;
+  const isChunkExiting = activeIndex >= 0 && captionTime >= visibleCueEnd - 0.18;
   const anyVideoProcessing = videos.some((video) => video.status === "processing");
   const selectedFont = FONT_OPTIONS.find((font) => font.value === fontChoice) ?? FONT_OPTIONS[0];
 
   useEffect(() => { videosRef.current = videos; }, [videos]);
+
+  useEffect(() => {
+    setTranscriptDraft(transcript);
+    setIsEditingTranscript(false);
+  }, [activeVideoId, transcript]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -229,6 +245,37 @@ export default function Home() {
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
+  }
+
+  function applyTranscriptEdits() {
+    if (!activeVideo) return;
+    const editedWords = transcriptDraft.trim().split(/\s+/).filter(Boolean);
+    if (!editedWords.length) {
+      notify("The transcript cannot be empty");
+      return;
+    }
+
+    const originalCues = activeVideo.cues;
+    let editedCues: WordCue[];
+    if (editedWords.length === originalCues.length) {
+      editedCues = editedWords.map((word, index) => ({ ...originalCues[index], word }));
+    } else {
+      const start = originalCues[0]?.start ?? 0;
+      const detectedEnd = originalCues[originalCues.length - 1]?.end;
+      const end = detectedEnd && detectedEnd > start ? detectedEnd : Math.max(start + 0.4, activeVideo.duration);
+      const wordDuration = (end - start) / editedWords.length;
+      editedCues = editedWords.map((word, index) => ({
+        word,
+        start: start + index * wordDuration,
+        end: start + (index + 1) * wordDuration,
+      }));
+    }
+
+    updateVideo(activeVideo.id, { transcript: editedWords.join(" "), cues: editedCues });
+    setIsEditingTranscript(false);
+    notify(editedWords.length === originalCues.length
+      ? "Transcript updated with the original timing"
+      : "Transcript updated and timing redistributed");
   }
 
   async function transcribeVideo(project: VideoProject) {
@@ -457,6 +504,26 @@ export default function Home() {
       const centerY = canvas.height * captionY / 100;
       const lineHeight = size * 1.18;
       const lineTotals = lines.map((line) => line.reduce((sum, item) => sum + item.width, 0) + gap * Math.max(0, line.length - 1));
+      const firstCue = chunk.words[0];
+      const lastCue = chunk.words[chunk.words.length - 1];
+      const entryProgress = clamp((adjustedTime - firstCue.start) / 0.18, 0, 1);
+      const lastCueEnd = lastCue.end > lastCue.start ? lastCue.end : lastCue.start + 0.4;
+      const exitProgress = clamp((adjustedTime - (lastCueEnd - 0.18)) / 0.18, 0, 1);
+      let groupScale = 1;
+      let groupY = 0;
+      let groupOpacity = 1;
+      if (entryAnimation === "fade") groupOpacity *= entryProgress;
+      if (entryAnimation === "pop") groupScale *= 0.82 + entryProgress * 0.18;
+      if (entryAnimation === "slide-up") groupY += (1 - entryProgress) * 42;
+      if (exitAnimation === "fade") groupOpacity *= 1 - exitProgress;
+      if (exitAnimation === "shrink") groupScale *= 1 - exitProgress * 0.22;
+      if (exitAnimation === "slide-down") groupY += exitProgress * 42;
+
+      context.save();
+      context.globalAlpha *= groupOpacity;
+      context.translate(centerX, centerY + groupY);
+      context.scale(groupScale, groupScale);
+      context.translate(-centerX, -centerY);
       if (preset === "boxed") {
         context.fillStyle = "rgba(5,6,8,.82)";
         context.beginPath();
@@ -508,6 +575,7 @@ export default function Home() {
           cursor += width + gap;
         });
       });
+      context.restore();
     }
 
     const draw = () => {
@@ -535,6 +603,7 @@ export default function Home() {
   }
 
   const captionClass = `caption caption-${preset} active-${activeStyle}`;
+  const captionWordsClass = `caption-words entry-${entryAnimation} ${isChunkExiting ? `exit-${exitAnimation}` : ""}`;
 
   return (
     <main className="app-shell">
@@ -592,7 +661,8 @@ export default function Home() {
           <div className={`transcription-card status-${transcriptionStatus}`}>
             {transcriptionStatus === "idle" && <><span className="transcription-icon">⌁</span><strong>Upload or select a video</strong><p>Whisper will extract the words and their timing automatically.</p></>}
             {transcriptionStatus === "processing" && <><span className="ai-loader"><i /><i /><i /></span><strong>{transcriptionMessage || "Whisper is transcribing…"}</strong><div className="model-progress"><i style={{ width: `${transcriptionProgress}%` }} /></div><p>{transcriptionProgress}% · You can style the captions while you wait</p></>}
-            {transcriptionStatus === "ready" && <><span className="transcription-done">✓</span><strong>Transcription complete</strong><p className="transcript-preview">{transcript}</p><small>{cues.length} words · word-level timestamps</small></>}
+            {transcriptionStatus === "ready" && !isEditingTranscript && <><span className="transcription-done">✓</span><strong>Transcription complete</strong><p className="transcript-preview">{transcript}</p><small>{cues.length} words · word-level timestamps</small><button className="edit-transcript-button" onClick={() => setIsEditingTranscript(true)}>Edit transcript</button></>}
+            {transcriptionStatus === "ready" && isEditingTranscript && <div className="transcript-editor"><label htmlFor="transcript-editor">Edit transcription</label><textarea id="transcript-editor" value={transcriptDraft} onChange={(event) => setTranscriptDraft(event.target.value)} /><p>Replacing words keeps their timing. Adding or removing words redistributes timing automatically.</p><div><button onClick={() => { setTranscriptDraft(transcript); setIsEditingTranscript(false); }}>Cancel</button><button className="save-transcript-button" onClick={applyTranscriptEdits}>Apply changes</button></div></div>}
             {transcriptionStatus === "error" && <><span className="transcription-error">!</span><strong>Transcription failed</strong><p>{transcriptionError}</p><button onClick={() => activeVideo && transcribeVideo(activeVideo)} disabled={anyVideoProcessing}>Try again</button></>}
           </div>
           <p className="demo-note">Your videos stay on this device. Whisper runs inside the browser.</p>
@@ -629,10 +699,12 @@ export default function Home() {
                 tabIndex={0}
                 aria-label="Caption box. Drag to move or use the arrow keys."
               >
-                {visibleChunk.words.map((cue, index) => {
-                  const globalIndex = visibleChunk.offset + index;
-                  return <span key={`${cue.start}-${cue.word}`} className={globalIndex === activeIndex ? "active-word" : ""}>{formatCaptionWord(cue.word, uppercase, showPunctuation)}</span>;
-                })}
+                <span key={visibleChunk.offset} className={captionWordsClass}>
+                  {visibleChunk.words.map((cue, index) => {
+                    const globalIndex = visibleChunk.offset + index;
+                    return <span key={`${cue.start}-${cue.word}`} className={globalIndex === activeIndex ? "active-word" : ""}>{formatCaptionWord(cue.word, uppercase, showPunctuation)}</span>;
+                  })}
+                </span>
                 <button className="caption-resize" onPointerDown={(event) => { event.stopPropagation(); beginCaptionInteraction(event, "resize"); }} aria-label="Drag to resize caption box">↘</button>
               </div>
               <span className="safe-zone top-safe">SAFE ZONE</span><span className="safe-zone bottom-safe" />
@@ -648,9 +720,10 @@ export default function Home() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(0); setWordsPerFrame(5); setShowPunctuation(true); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(0); setWordsPerFrame(5); setShowPunctuation(true); setEntryAnimation("pop"); setExitAnimation("fade"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
           <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
           <div className="control-group"><label>Active word</label><div className="highlight-options">{ACTIVE_STYLE_OPTIONS.map((style) => <button key={style.value} className={activeStyle === style.value ? "selected" : ""} onClick={() => setActiveStyle(style.value)}><span className={style.previewClass}>WORD</span><small>{style.label}</small></button>)}</div></div>
+          <div className="control-group animation-group"><label>Caption animation</label><div className="animation-selects"><label htmlFor="entry-animation"><span>Entrance</span><select id="entry-animation" value={entryAnimation} onChange={(event) => setEntryAnimation(event.target.value as EntryAnimation)}><option value="none">None</option><option value="fade">Fade in</option><option value="pop">Pop in</option><option value="slide-up">Slide up</option></select></label><label htmlFor="exit-animation"><span>Exit</span><select id="exit-animation" value={exitAnimation} onChange={(event) => setExitAnimation(event.target.value as ExitAnimation)}><option value="none">None</option><option value="fade">Fade out</option><option value="shrink">Shrink</option><option value="slide-down">Slide down</option></select></label></div></div>
           <div className="control-group"><label>Quick position</label><div className="segmented">{(["top", "middle", "bottom"] as const).map((item) => <button key={item} className={position === item ? "selected" : ""} onClick={() => setCaptionPosition(item)}><span className={`position-icon position-${item}`}><i /></span>{item === "top" ? "Top" : item === "middle" ? "Center" : "Bottom"}</button>)}</div></div>
           <div className="control-group words-group">
             <div className="range-label"><label htmlFor="words-per-frame">Words per frame</label><output>{wordsPerFrame}</output></div>
