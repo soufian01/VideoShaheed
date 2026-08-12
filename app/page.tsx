@@ -206,7 +206,7 @@ export default function Home() {
   }, [isPlaying, activeVideoId]);
 
   useEffect(() => {
-    const worker = new Worker("/whisper.worker.js", { type: "module" });
+    const worker = new Worker("/whisper.worker.js?v=gpu-fallback-1", { type: "module" });
     whisperWorkerRef.current = worker;
     worker.onmessage = (event: MessageEvent<{
       type: "status" | "result" | "error";
