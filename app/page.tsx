@@ -117,8 +117,8 @@ export default function Home() {
   const [timingOffset, setTimingOffset] = useState(DEFAULT_TIMING_OFFSET);
   const [wordsPerFrame, setWordsPerFrame] = useState(5);
   const [showPunctuation, setShowPunctuation] = useState(true);
-  const [entryAnimation, setEntryAnimation] = useState<EntryAnimation>("pop");
-  const [exitAnimation, setExitAnimation] = useState<ExitAnimation>("fade");
+  const [entryAnimation, setEntryAnimation] = useState<EntryAnimation>("none");
+  const [exitAnimation, setExitAnimation] = useState<ExitAnimation>("none");
   const [textColor, setTextColor] = useState("#FFFFFF");
   const [activeColor, setActiveColor] = useState("#D9FF43");
   const [activeStyle, setActiveStyle] = useState<ActiveStyle>("color");
@@ -721,7 +721,7 @@ export default function Home() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(DEFAULT_TIMING_OFFSET); setWordsPerFrame(5); setShowPunctuation(true); setEntryAnimation("pop"); setExitAnimation("fade"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(DEFAULT_TIMING_OFFSET); setWordsPerFrame(5); setShowPunctuation(true); setEntryAnimation("none"); setExitAnimation("none"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
           <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
           <div className="control-group"><label>Active word</label><div className="highlight-options">{ACTIVE_STYLE_OPTIONS.map((style) => <button key={style.value} className={activeStyle === style.value ? "selected" : ""} onClick={() => setActiveStyle(style.value)}><span className={style.previewClass}>WORD</span><small>{style.label}</small></button>)}</div></div>
           <div className="control-group animation-group"><label>Caption animation</label><div className="animation-selects"><label htmlFor="entry-animation"><span>Entrance</span><select id="entry-animation" value={entryAnimation} onChange={(event) => setEntryAnimation(event.target.value as EntryAnimation)}><option value="none">None</option><option value="fade">Fade in</option><option value="pop">Pop in</option><option value="slide-up">Slide up</option></select></label><label htmlFor="exit-animation"><span>Exit</span><select id="exit-animation" value={exitAnimation} onChange={(event) => setExitAnimation(event.target.value as ExitAnimation)}><option value="none">None</option><option value="fade">Fade out</option><option value="shrink">Shrink</option><option value="slide-down">Slide down</option></select></label></div></div>
