@@ -159,7 +159,7 @@ textarea:focus { border-color: #a6b84b; background: white; outline: none; box-sh
 .timeline::-webkit-slider-thumb, .size-slider::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; border: 3px solid white; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 1px #aaa; cursor: pointer; }
 
 .right-panel { padding-left: 25px; padding-right: 25px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 0 20px; }
-.right-panel .panel-heading, .right-panel .tip-card { grid-column: 1 / -1; }
+.right-panel .panel-heading, .right-panel .tip-card, .right-panel .export-group { grid-column: 1 / -1; }
 .control-group { padding: 18px 0; border-top: 1px solid #ecece7; }
 .control-group > label, .range-label label { display: block; margin-bottom: 11px; color: #46494b; font-size: 10px; font-weight: 800; }
 .preset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
@@ -217,6 +217,21 @@ textarea:focus { border-color: #a6b84b; background: white; outline: none; box-sh
 .toggle i { width: 15px; height: 15px; display: block; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: .2s; }
 .toggle.on { background: var(--ink); }
 .toggle.on i { transform: translateX(16px); background: var(--lime); }
+.export-group { margin-top: 2px; }
+.export-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.export-heading label { display: block; margin-top: 3px; color: #303331; font-size: 12px; font-weight: 850; }
+.export-heading > span { padding: 4px 7px; border-radius: 5px; background: #eff3d9; color: #667300; font-size: 7px; font-weight: 900; letter-spacing: .5px; }
+.export-options { margin-top: 13px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.export-options label > span { display: block; margin-bottom: 5px; color: #888b86; font-size: 8px; font-weight: 700; }
+.export-options select { width: 100%; height: 38px; padding: 0 9px; border: 1px solid #deded9; border-radius: 8px; background: #fafaf8; color: #414441; font-size: 9px; font-weight: 700; cursor: pointer; }
+.export-group > p { margin: 10px 0; color: #858885; font-size: 8px; text-align: center; }
+.export-progress { height: 25px; margin: 0 0 8px; position: relative; overflow: hidden; border-radius: 7px; background: #e8e9e3; }
+.export-progress i { height: 100%; display: block; background: linear-gradient(90deg, #d9ff43, #b9dc22); transition: width .2s linear; }
+.export-progress span { position: absolute; inset: 0; display: grid; place-items: center; color: #373b31; font-size: 8px; font-weight: 850; }
+.export-panel-button { width: 100%; height: 40px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 9px; background: var(--ink); color: white; font-size: 10px; font-weight: 850; cursor: pointer; }
+.export-panel-button:hover { background: #292c2a; }
+.export-panel-button:disabled { opacity: .45; cursor: default; }
+.export-panel-button .spinner { width: 12px; height: 12px; }
 .tip-card { margin-top: 14px; padding: 12px; display: flex; gap: 10px; border: 1px solid #e7e8d8; border-radius: 9px; background: #fbfceb; }
 .tip-card > span { color: #93a900; }
 .tip-card p { margin: 0; color: #7c7e76; font-size: 9px; line-height: 1.45; }
@@ -229,7 +244,7 @@ textarea:focus { border-color: #a6b84b; background: white; outline: none; box-sh
 @media (max-width: 1180px) {
   .workspace { grid-template-columns: 285px minmax(380px, 1fr); }
   .right-panel { grid-column: 1 / -1; border-top: 1px solid var(--line); border-left: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 22px; }
-  .right-panel .panel-heading, .right-panel .tip-card { grid-column: 1 / -1; }
+  .right-panel .panel-heading, .right-panel .tip-card, .right-panel .export-group { grid-column: 1 / -1; }
 }
 
 @media (max-width: 720px) {

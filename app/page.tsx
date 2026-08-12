@@ -9,6 +9,10 @@ type ActiveStyle = "color" | "background" | "underline" | "outline" | "scale";
 type FontChoice = "impact" | "arial-black" | "arial" | "arial-narrow" | "verdana" | "trebuchet" | "georgia" | "times" | "courier" | "comic";
 type EntryAnimation = "none" | "fade" | "pop" | "slide-up";
 type ExitAnimation = "none" | "fade" | "shrink" | "slide-down";
+type ExportFormat = "mp4" | "webm";
+type ExportResolution = "540" | "720" | "1080";
+type ExportFps = 24 | 30 | 60;
+type ExportQuality = "compact" | "standard" | "high";
 type TranscriptionStatus = "idle" | "processing" | "ready" | "error";
 type VideoProject = {
   id: string;
@@ -29,6 +33,16 @@ const SAMPLE_TEXT = "Make every word impossible to miss.";
 // roughly three frames keeps the highlighted word aligned with what is heard.
 const PREVIEW_RENDER_LEAD_SECONDS = 0.055;
 const DEFAULT_TIMING_OFFSET = -0.25;
+const EXPORT_RESOLUTIONS: Record<ExportResolution, { width: number; height: number; label: string }> = {
+  "540": { width: 540, height: 960, label: "540p · Small" },
+  "720": { width: 720, height: 1280, label: "720p · Recommended" },
+  "1080": { width: 1080, height: 1920, label: "1080p · Full HD" },
+};
+const EXPORT_BITRATES: Record<ExportResolution, Record<ExportQuality, number>> = {
+  "540": { compact: 2_500_000, standard: 4_000_000, high: 6_000_000 },
+  "720": { compact: 4_000_000, standard: 6_000_000, high: 10_000_000 },
+  "1080": { compact: 8_000_000, standard: 12_000_000, high: 18_000_000 },
+};
 const FONT_OPTIONS: Array<{ value: FontChoice; label: string; family: string }> = [
   { value: "impact", label: "Impact", family: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
   { value: "arial-black", label: "Arial Black", family: "'Arial Black', Arial, sans-serif" },
@@ -123,7 +137,12 @@ export default function Home() {
   const [activeColor, setActiveColor] = useState("#D9FF43");
   const [activeStyle, setActiveStyle] = useState<ActiveStyle>("color");
   const [uppercase, setUppercase] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("mp4");
+  const [exportResolution, setExportResolution] = useState<ExportResolution>("720");
+  const [exportFps, setExportFps] = useState<ExportFps>(30);
+  const [exportQuality, setExportQuality] = useState<ExportQuality>("standard");
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
   const [isEditingTranscript, setIsEditingTranscript] = useState(false);
   const [transcriptDraft, setTranscriptDraft] = useState("");
   const [toast, setToast] = useState("");
@@ -450,29 +469,81 @@ export default function Home() {
       notify("This browser does not support video export");
       return;
     }
+    const mimeTypes = exportFormat === "mp4"
+      ? ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1.42E01E", "video/mp4"]
+      : ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type));
+    if (!mimeType) {
+      notify(`${exportFormat.toUpperCase()} export is not supported by this browser. Try another format or browser.`);
+      return;
+    }
+    setExportProgress(0);
     setExporting(true);
     const canvas = document.createElement("canvas");
-    canvas.width = 720;
-    canvas.height = 1280;
+    const exportSize = EXPORT_RESOLUTIONS[exportResolution];
+    canvas.width = exportSize.width;
+    canvas.height = exportSize.height;
     const maybeContext = canvas.getContext("2d");
     if (!maybeContext) return setExporting(false);
     const context: CanvasRenderingContext2D = maybeContext;
-    const stream = canvas.captureStream(30);
+    const stream = canvas.captureStream(exportFps);
     const sourceStream = (video as HTMLVideoElement & { captureStream?: () => MediaStream }).captureStream?.();
     sourceStream?.getAudioTracks().forEach((track) => stream.addTrack(track));
-    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm";
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: EXPORT_BITRATES[exportResolution][exportQuality],
+      });
+    } catch {
+      setExporting(false);
+      notify(`This browser could not start the ${exportFormat.toUpperCase()} export. Try another format or browser.`);
+      return;
+    }
     const parts: Blob[] = [];
+    const previousTime = video.currentTime;
+    let exportFailed = false;
+    let frameCallbackId: number | null = null;
+    let animationFrameId: number | null = null;
+    let lastRenderedMediaTime = Number.NEGATIVE_INFINITY;
+    let lastProgress = -1;
+
+    const cleanUp = () => {
+      if (frameCallbackId !== null && typeof video.cancelVideoFrameCallback === "function") video.cancelVideoFrameCallback(frameCallbackId);
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+      video.pause();
+      video.onended = null;
+      stream.getTracks().forEach((track) => track.stop());
+      video.currentTime = Math.min(previousTime, Number.isFinite(video.duration) ? video.duration : previousTime);
+      setCurrentTime(video.currentTime);
+    };
+
     recorder.ondataavailable = (event) => event.data.size && parts.push(event.data);
     recorder.onstop = () => {
+      cleanUp();
+      if (exportFailed || !parts.length) {
+        setExporting(false);
+        setExportProgress(0);
+        if (!exportFailed) notify("The export produced an empty file. Try a lower resolution or WebM.");
+        return;
+      }
       const url = URL.createObjectURL(new Blob(parts, { type: mimeType }));
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${activeVideo.name.replace(/\.[^.]+$/, "") || "reel"}-captions.webm`;
+      anchor.download = `${activeVideo.name.replace(/\.[^.]+$/, "") || "reel"}-captions.${exportFormat}`;
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setExportProgress(100);
       setExporting(false);
-      notify("Export complete");
+      notify(`${exportFormat.toUpperCase()} export complete`);
+    };
+    recorder.onerror = () => {
+      exportFailed = true;
+      if (recorder.state !== "inactive") recorder.stop();
+      else cleanUp();
+      setExporting(false);
+      setExportProgress(0);
+      notify("Export stopped. Try 720p, 30 FPS, or the WebM format.");
     };
 
     function drawCaption(time: number) {
@@ -579,8 +650,7 @@ export default function Home() {
       context.restore();
     }
 
-    const draw = () => {
-      if (video.paused || video.ended) return;
+    const drawFrame = () => {
       const videoRatio = video.videoWidth / video.videoHeight;
       const canvasRatio = canvas.width / canvas.height;
       let width = canvas.width;
@@ -593,14 +663,51 @@ export default function Home() {
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(video, x, y, width, height);
       drawCaption(video.currentTime);
-      requestAnimationFrame(draw);
+      const nextProgress = Math.min(99, Math.round((video.currentTime / Math.max(video.duration, 0.01)) * 100));
+      if (nextProgress !== lastProgress) {
+        lastProgress = nextProgress;
+        setExportProgress(nextProgress);
+      }
     };
+
+    const scheduleDraw = () => {
+      if (video.paused || video.ended || recorder.state === "inactive") return;
+      if (typeof video.requestVideoFrameCallback === "function") {
+        frameCallbackId = video.requestVideoFrameCallback((_now, metadata) => {
+          if (metadata.mediaTime - lastRenderedMediaTime >= (1 / exportFps) * 0.9) {
+            lastRenderedMediaTime = metadata.mediaTime;
+            drawFrame();
+          }
+          scheduleDraw();
+        });
+      } else {
+        animationFrameId = requestAnimationFrame(() => {
+          if (video.currentTime - lastRenderedMediaTime >= (1 / exportFps) * 0.9) {
+            lastRenderedMediaTime = video.currentTime;
+            drawFrame();
+          }
+          scheduleDraw();
+        });
+      }
+    };
+
     video.pause();
     video.currentTime = 0;
-    recorder.start(1000);
+    if (video.seeking) await new Promise<void>((resolve) => video.addEventListener("seeked", () => resolve(), { once: true }));
+    drawFrame();
+    recorder.start();
     video.onended = () => recorder.state !== "inactive" && recorder.stop();
-    await video.play();
-    draw();
+    try {
+      await video.play();
+      scheduleDraw();
+    } catch {
+      exportFailed = true;
+      if (recorder.state !== "inactive") recorder.stop();
+      else cleanUp();
+      setExporting(false);
+      setExportProgress(0);
+      notify("The browser could not play the video for export. Try reloading the video.");
+    }
   }
 
   const captionClass = `caption caption-${preset} active-${activeStyle}`;
@@ -614,7 +721,7 @@ export default function Home() {
         </a>
         <button className="export-button" onClick={exportVideo} disabled={exporting || !activeVideo}>
           {exporting ? <span className="spinner" /> : <span aria-hidden>↗</span>}
-          {exporting ? "Exporting…" : "Export video"}
+          {exporting ? `Exporting ${exportProgress}%` : `Export ${exportFormat.toUpperCase()}`}
         </button>
       </header>
 
@@ -721,7 +828,7 @@ export default function Home() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(DEFAULT_TIMING_OFFSET); setWordsPerFrame(5); setShowPunctuation(true); setEntryAnimation("none"); setExitAnimation("none"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(DEFAULT_TIMING_OFFSET); setWordsPerFrame(5); setShowPunctuation(true); setEntryAnimation("none"); setExitAnimation("none"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); setExportFormat("mp4"); setExportResolution("720"); setExportFps(30); setExportQuality("standard"); }}>Reset</button></div>
           <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
           <div className="control-group"><label>Active word</label><div className="highlight-options">{ACTIVE_STYLE_OPTIONS.map((style) => <button key={style.value} className={activeStyle === style.value ? "selected" : ""} onClick={() => setActiveStyle(style.value)}><span className={style.previewClass}>WORD</span><small>{style.label}</small></button>)}</div></div>
           <div className="control-group animation-group"><label>Caption animation</label><div className="animation-selects"><label htmlFor="entry-animation"><span>Entrance</span><select id="entry-animation" value={entryAnimation} onChange={(event) => setEntryAnimation(event.target.value as EntryAnimation)}><option value="none">None</option><option value="fade">Fade in</option><option value="pop">Pop in</option><option value="slide-up">Slide up</option></select></label><label htmlFor="exit-animation"><span>Exit</span><select id="exit-animation" value={exitAnimation} onChange={(event) => setExitAnimation(event.target.value as ExitAnimation)}><option value="none">None</option><option value="fade">Fade out</option><option value="shrink">Shrink</option><option value="slide-down">Slide down</option></select></label></div></div>
@@ -754,6 +861,18 @@ export default function Home() {
           </div>
           <div className="control-group color-group"><label>Colors</label><div className="color-row"><span>Text</span><label className="color-control"><i style={{ background: textColor }} /><span>{textColor}</span><input type="color" value={textColor} onChange={(event) => setTextColor(event.target.value.toUpperCase())} aria-label="Text color" /></label></div><div className="color-row"><span>Active word</span><label className="color-control"><i style={{ background: activeColor }} /><span>{activeColor}</span><input type="color" value={activeColor} onChange={(event) => setActiveColor(event.target.value.toUpperCase())} aria-label="Active word color" /></label></div></div>
           <div className="control-group toggle-row"><div><label>Uppercase</label><span>Add more impact in the feed</span></div><button className={`toggle ${uppercase ? "on" : ""}`} onClick={() => setUppercase((value) => !value)} aria-pressed={uppercase} aria-label="Toggle uppercase"><i /></button></div>
+          <div className="control-group export-group">
+            <div className="export-heading"><div><span className="eyebrow">STEP 4</span><label>Export settings</label></div><span>9:16 REEL</span></div>
+            <div className="export-options">
+              <label htmlFor="export-format"><span>Format</span><select id="export-format" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as ExportFormat)}><option value="mp4">MP4 · Instagram</option><option value="webm">WebM · Web</option></select></label>
+              <label htmlFor="export-resolution"><span>Resolution</span><select id="export-resolution" value={exportResolution} onChange={(event) => setExportResolution(event.target.value as ExportResolution)}>{(Object.keys(EXPORT_RESOLUTIONS) as ExportResolution[]).map((value) => <option key={value} value={value}>{EXPORT_RESOLUTIONS[value].label}</option>)}</select></label>
+              <label htmlFor="export-fps"><span>Frame rate</span><select id="export-fps" value={exportFps} onChange={(event) => setExportFps(Number(event.target.value) as ExportFps)}><option value={24}>24 FPS · Cinematic</option><option value={30}>30 FPS · Recommended</option><option value={60}>60 FPS · Smooth</option></select></label>
+              <label htmlFor="export-quality"><span>Quality</span><select id="export-quality" value={exportQuality} onChange={(event) => setExportQuality(event.target.value as ExportQuality)}><option value="compact">Compact · Smaller file</option><option value="standard">Standard · Recommended</option><option value="high">High · Larger file</option></select></label>
+            </div>
+            <p>{EXPORT_RESOLUTIONS[exportResolution].width} × {EXPORT_RESOLUTIONS[exportResolution].height} · {exportFps} FPS · {Math.round(EXPORT_BITRATES[exportResolution][exportQuality] / 1_000_000)} Mbps</p>
+            {exporting && <div className="export-progress" role="progressbar" aria-label="Export progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={exportProgress}><i style={{ width: `${exportProgress}%` }} /><span>{exportProgress}% · processing video</span></div>}
+            <button className="export-panel-button" onClick={exportVideo} disabled={exporting || !activeVideo}>{exporting ? <span className="spinner" /> : <span aria-hidden>↗</span>}{exporting ? `Exporting ${exportProgress}%` : `Export ${exportFormat.toUpperCase()}`}</button>
+          </div>
           <div className="tip-card"><span>✦</span><p><strong>Direct editing</strong>Drag the caption layer inside the preview to place it exactly where you want.</p></div>
         </aside>
       </section>
