@@ -5,8 +5,8 @@ import { ChangeEvent, DragEvent, PointerEvent as ReactPointerEvent, useEffect, u
 type WordCue = { word: string; start: number; end: number };
 type Position = "top" | "middle" | "bottom" | "custom";
 type StylePreset = "impact" | "minimal" | "boxed";
-type ActiveStyle = "color" | "background";
-type FontChoice = "impact" | "arial-black" | "arial" | "georgia" | "courier";
+type ActiveStyle = "color" | "background" | "underline" | "outline" | "scale";
+type FontChoice = "impact" | "arial-black" | "arial" | "arial-narrow" | "verdana" | "trebuchet" | "georgia" | "times" | "courier" | "comic";
 type TranscriptionStatus = "idle" | "processing" | "ready" | "error";
 type VideoProject = {
   id: string;
@@ -30,8 +30,20 @@ const FONT_OPTIONS: Array<{ value: FontChoice; label: string; family: string }> 
   { value: "impact", label: "Impact", family: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
   { value: "arial-black", label: "Arial Black", family: "'Arial Black', Arial, sans-serif" },
   { value: "arial", label: "Clean Sans", family: "Arial, Helvetica, sans-serif" },
+  { value: "arial-narrow", label: "Condensed", family: "'Arial Narrow', 'Helvetica Neue Condensed', Arial, sans-serif" },
+  { value: "verdana", label: "Verdana", family: "Verdana, Geneva, sans-serif" },
+  { value: "trebuchet", label: "Trebuchet", family: "'Trebuchet MS', Arial, sans-serif" },
   { value: "georgia", label: "Elegant Serif", family: "Georgia, 'Times New Roman', serif" },
+  { value: "times", label: "Classic Serif", family: "'Times New Roman', Times, serif" },
   { value: "courier", label: "Typewriter", family: "'Courier New', Courier, monospace" },
+  { value: "comic", label: "Playful", family: "'Comic Sans MS', 'Comic Sans', cursive" },
+];
+const ACTIVE_STYLE_OPTIONS: Array<{ value: ActiveStyle; label: string; previewClass: string }> = [
+  { value: "color", label: "Text color", previewClass: "highlight-color-preview" },
+  { value: "background", label: "Rounded box", previewClass: "highlight-box-preview" },
+  { value: "underline", label: "Underline", previewClass: "highlight-underline-preview" },
+  { value: "outline", label: "Outline", previewClass: "highlight-outline-preview" },
+  { value: "scale", label: "Pop", previewClass: "highlight-scale-preview" },
 ];
 
 function formatTime(seconds: number) {
@@ -47,10 +59,16 @@ function createCues(text: string, duration: number) {
   return words.map((word, index) => ({ word, start: index * wordDuration, end: (index + 1) * wordDuration }));
 }
 
-function chunkForIndex(cues: WordCue[], activeIndex: number) {
+function chunkForIndex(cues: WordCue[], activeIndex: number, wordsPerFrame: number) {
   if (!cues.length) return { words: [] as WordCue[], offset: 0 };
-  const offset = Math.floor(Math.max(0, activeIndex) / 5) * 5;
-  return { words: cues.slice(offset, offset + 5), offset };
+  const count = clamp(Math.round(wordsPerFrame), 1, 10);
+  const offset = Math.floor(Math.max(0, activeIndex) / count) * count;
+  return { words: cues.slice(offset, offset + count), offset };
+}
+
+function formatCaptionWord(word: string, uppercase: boolean, showPunctuation: boolean) {
+  const formatted = showPunctuation ? word : word.replace(/[.,!?;:…،؛؟。！？]+/gu, "");
+  return uppercase ? formatted.toUpperCase() : formatted;
 }
 
 function cueIndexAtTime(cues: WordCue[], time: number) {
@@ -94,6 +112,8 @@ export default function Home() {
   const [fontSize, setFontSize] = useState(34);
   const [fontChoice, setFontChoice] = useState<FontChoice>("impact");
   const [timingOffset, setTimingOffset] = useState(0);
+  const [wordsPerFrame, setWordsPerFrame] = useState(5);
+  const [showPunctuation, setShowPunctuation] = useState(true);
   const [textColor, setTextColor] = useState("#FFFFFF");
   const [activeColor, setActiveColor] = useState("#D9FF43");
   const [activeStyle, setActiveStyle] = useState<ActiveStyle>("color");
@@ -132,7 +152,7 @@ export default function Home() {
   const captionTime = Math.max(0, currentTime + PREVIEW_RENDER_LEAD_SECONDS - timingOffset);
   const activeIndex = useMemo(() => cueIndexAtTime(cues, captionTime), [cues, captionTime]);
   const displayIndex = useMemo(() => displayCueIndexAtTime(cues, captionTime, activeIndex), [cues, captionTime, activeIndex]);
-  const visibleChunk = useMemo(() => chunkForIndex(cues, displayIndex), [cues, displayIndex]);
+  const visibleChunk = useMemo(() => chunkForIndex(cues, displayIndex, wordsPerFrame), [cues, displayIndex, wordsPerFrame]);
   const anyVideoProcessing = videos.some((video) => video.status === "processing");
   const selectedFont = FONT_OPTIONS.find((font) => font.value === fontChoice) ?? FONT_OPTIONS[0];
 
@@ -411,42 +431,82 @@ export default function Home() {
       const adjustedTime = Math.max(0, time - timingOffset);
       const index = cueIndexAtTime(cues, adjustedTime);
       const displayIndex = displayCueIndexAtTime(cues, adjustedTime, index);
-      const chunk = chunkForIndex(cues, displayIndex);
+      const chunk = chunkForIndex(cues, displayIndex, wordsPerFrame);
       if (!chunk.words.length) return;
       const size = fontSize * 1.62;
-      const rendered = chunk.words.map((cue) => (uppercase ? cue.word.toUpperCase() : cue.word));
+      const rendered = chunk.words.map((cue) => formatCaptionWord(cue.word, uppercase, showPunctuation));
       context.font = `900 ${size}px ${selectedFont.family}`;
       context.textAlign = "center";
       context.textBaseline = "middle";
       const gap = 17;
-      const widths = rendered.map((word) => context.measureText(word).width);
-      const total = widths.reduce((sum, item) => sum + item, 0) + gap * (rendered.length - 1);
+      const widths = rendered.map((word, wordIndex) => {
+        const width = context.measureText(word).width;
+        return chunk.offset + wordIndex === index && activeStyle === "scale" ? width * 1.15 : width;
+      });
+      const maxLineWidth = Math.max(180, canvas.width * captionWidth / 100 - 44);
+      const lines: Array<Array<{ word: string; wordIndex: number; width: number }>> = [];
+      rendered.forEach((word, wordIndex) => {
+        const item = { word, wordIndex, width: widths[wordIndex] };
+        const line = lines[lines.length - 1];
+        const occupied = line?.reduce((sum, entry) => sum + entry.width, 0) ?? 0;
+        const proposed = occupied + (line?.length ? gap : 0) + item.width;
+        if (!line || (line.length > 0 && proposed > maxLineWidth)) lines.push([item]);
+        else line.push(item);
+      });
       const centerX = canvas.width * captionX / 100;
       const centerY = canvas.height * captionY / 100;
+      const lineHeight = size * 1.18;
+      const lineTotals = lines.map((line) => line.reduce((sum, item) => sum + item.width, 0) + gap * Math.max(0, line.length - 1));
       if (preset === "boxed") {
         context.fillStyle = "rgba(5,6,8,.82)";
         context.beginPath();
-        context.roundRect(centerX - total / 2 - 22, centerY - size * .78, total + 44, size * 1.5, 18);
+        const boxWidth = Math.min(maxLineWidth, Math.max(...lineTotals)) + 44;
+        const boxHeight = Math.max(size * 1.5, (lines.length - 1) * lineHeight + size * 1.5);
+        context.roundRect(centerX - boxWidth / 2, centerY - boxHeight / 2, boxWidth, boxHeight, 18);
         context.fill();
       }
-      let cursor = centerX - total / 2;
-      rendered.forEach((word, wordIndex) => {
-        const globalIndex = chunk.offset + wordIndex;
-        const wordCenter = cursor + widths[wordIndex] / 2;
-        if (globalIndex === index && activeStyle === "background") {
-          context.fillStyle = activeColor;
-          context.beginPath();
-          context.roundRect(wordCenter - widths[wordIndex] / 2 - 10, centerY - size * .67, widths[wordIndex] + 20, size * 1.25, 12);
-          context.fill();
-        }
-        if (preset === "impact") {
-          context.lineWidth = 11;
-          context.strokeStyle = "rgba(0,0,0,.88)";
-          context.strokeText(word, wordCenter, centerY);
-        }
-        context.fillStyle = globalIndex === index ? (activeStyle === "background" ? "#111315" : activeColor) : textColor;
-        context.fillText(word, wordCenter, centerY);
-        cursor += widths[wordIndex] + gap;
+      lines.forEach((line, lineIndex) => {
+        const lineY = centerY + (lineIndex - (lines.length - 1) / 2) * lineHeight;
+        let cursor = centerX - lineTotals[lineIndex] / 2;
+        line.forEach(({ word, wordIndex, width }) => {
+          const globalIndex = chunk.offset + wordIndex;
+          const isActive = globalIndex === index;
+          const wordCenter = cursor + width / 2;
+          if (isActive && activeStyle === "background") {
+            context.fillStyle = activeColor;
+            context.beginPath();
+            context.roundRect(wordCenter - width / 2 - 10, lineY - size * .67, width + 20, size * 1.25, 12);
+            context.fill();
+          }
+          if (isActive && activeStyle === "underline") {
+            context.fillStyle = activeColor;
+            context.beginPath();
+            context.roundRect(wordCenter - width / 2, lineY + size * .52, width, Math.max(5, size * .09), 4);
+            context.fill();
+          }
+
+          context.save();
+          context.translate(wordCenter, lineY);
+          if (isActive && activeStyle === "scale") context.scale(1.15, 1.15);
+          if (preset === "impact") {
+            context.lineWidth = 11;
+            context.strokeStyle = "rgba(0,0,0,.88)";
+            context.strokeText(word, 0, 0);
+          }
+          if (isActive && activeStyle === "outline") {
+            context.lineWidth = 7;
+            context.strokeStyle = activeColor;
+            context.strokeText(word, 0, 0);
+          }
+          context.fillStyle = isActive && activeStyle === "color"
+            ? activeColor
+            : isActive && activeStyle === "background"
+              ? "#111315"
+              : textColor;
+          context.fillText(word, 0, 0);
+          context.restore();
+          cursor += width + gap;
+        });
       });
     }
 
@@ -559,7 +619,7 @@ export default function Home() {
               )}
               <div
                 className={captionClass}
-                style={{ left: `${captionX}%`, top: `${captionY}%`, width: `${captionWidth}%`, fontSize, fontFamily: selectedFont.family, color: textColor }}
+                style={{ left: `${captionX}%`, top: `${captionY}%`, width: `${captionWidth}%`, fontSize, fontFamily: selectedFont.family, color: textColor, "--active-color": activeColor } as React.CSSProperties}
                 onPointerDown={(event) => beginCaptionInteraction(event, "move")}
                 onPointerMove={moveCaption}
                 onPointerUp={endCaptionInteraction}
@@ -571,7 +631,7 @@ export default function Home() {
               >
                 {visibleChunk.words.map((cue, index) => {
                   const globalIndex = visibleChunk.offset + index;
-                  return <span key={`${cue.start}-${cue.word}`} className={globalIndex === activeIndex ? "active-word" : ""} style={globalIndex === activeIndex ? (activeStyle === "background" ? { backgroundColor: activeColor, color: "#111315" } : { color: activeColor }) : undefined}>{uppercase ? cue.word.toUpperCase() : cue.word}</span>;
+                  return <span key={`${cue.start}-${cue.word}`} className={globalIndex === activeIndex ? "active-word" : ""}>{formatCaptionWord(cue.word, uppercase, showPunctuation)}</span>;
                 })}
                 <button className="caption-resize" onPointerDown={(event) => { event.stopPropagation(); beginCaptionInteraction(event, "resize"); }} aria-label="Drag to resize caption box">↘</button>
               </div>
@@ -588,10 +648,15 @@ export default function Home() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(0); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(0); setWordsPerFrame(5); setShowPunctuation(true); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
           <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
-          <div className="control-group"><label>Active word</label><div className="highlight-options"><button className={activeStyle === "color" ? "selected" : ""} onClick={() => setActiveStyle("color")}><span className="highlight-color-preview">WORD</span><small>Text color</small></button><button className={activeStyle === "background" ? "selected" : ""} onClick={() => setActiveStyle("background")}><span className="highlight-box-preview">WORD</span><small>Rounded box</small></button></div></div>
+          <div className="control-group"><label>Active word</label><div className="highlight-options">{ACTIVE_STYLE_OPTIONS.map((style) => <button key={style.value} className={activeStyle === style.value ? "selected" : ""} onClick={() => setActiveStyle(style.value)}><span className={style.previewClass}>WORD</span><small>{style.label}</small></button>)}</div></div>
           <div className="control-group"><label>Quick position</label><div className="segmented">{(["top", "middle", "bottom"] as const).map((item) => <button key={item} className={position === item ? "selected" : ""} onClick={() => setCaptionPosition(item)}><span className={`position-icon position-${item}`}><i /></span>{item === "top" ? "Top" : item === "middle" ? "Center" : "Bottom"}</button>)}</div></div>
+          <div className="control-group words-group">
+            <div className="range-label"><label htmlFor="words-per-frame">Words per frame</label><output>{wordsPerFrame}</output></div>
+            <input id="words-per-frame" className="size-slider" type="range" min="1" max="10" step="1" value={wordsPerFrame} onChange={(event) => setWordsPerFrame(Number(event.target.value))} style={{ "--progress": `${((wordsPerFrame - 1) / 9) * 100}%` } as React.CSSProperties} />
+            <div className="checkbox-row"><div><label htmlFor="show-punctuation">Show punctuation</label><span>Keep commas, periods and question marks</span></div><input id="show-punctuation" type="checkbox" checked={showPunctuation} onChange={(event) => setShowPunctuation(event.target.checked)} /></div>
+          </div>
           <div className="control-group typography-group">
             <label htmlFor="font-family">Font</label>
             <select id="font-family" className="font-select" value={fontChoice} onChange={(event) => setFontChoice(event.target.value as FontChoice)}>
