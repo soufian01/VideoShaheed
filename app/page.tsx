@@ -28,6 +28,7 @@ const SAMPLE_TEXT = "Make every word impossible to miss.";
 // React paints shortly after requestVideoFrameCallback fires. Looking ahead by
 // roughly three frames keeps the highlighted word aligned with what is heard.
 const PREVIEW_RENDER_LEAD_SECONDS = 0.055;
+const DEFAULT_TIMING_OFFSET = -0.25;
 const FONT_OPTIONS: Array<{ value: FontChoice; label: string; family: string }> = [
   { value: "impact", label: "Impact", family: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
   { value: "arial-black", label: "Arial Black", family: "'Arial Black', Arial, sans-serif" },
@@ -113,7 +114,7 @@ export default function Home() {
   const [preset, setPreset] = useState<StylePreset>("impact");
   const [fontSize, setFontSize] = useState(34);
   const [fontChoice, setFontChoice] = useState<FontChoice>("impact");
-  const [timingOffset, setTimingOffset] = useState(0);
+  const [timingOffset, setTimingOffset] = useState(DEFAULT_TIMING_OFFSET);
   const [wordsPerFrame, setWordsPerFrame] = useState(5);
   const [showPunctuation, setShowPunctuation] = useState(true);
   const [entryAnimation, setEntryAnimation] = useState<EntryAnimation>("pop");
@@ -720,7 +721,7 @@ export default function Home() {
         </section>
 
         <aside className="right-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(0); setWordsPerFrame(5); setShowPunctuation(true); setEntryAnimation("pop"); setExitAnimation("fade"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">STEP 3</span><h2>Customize</h2></div><button className="reset-button" onClick={() => { setPreset("impact"); setCaptionPosition("bottom"); setCaptionWidth(86); setFontSize(34); setFontChoice("impact"); setTimingOffset(DEFAULT_TIMING_OFFSET); setWordsPerFrame(5); setShowPunctuation(true); setEntryAnimation("pop"); setExitAnimation("fade"); setTextColor("#FFFFFF"); setActiveColor("#D9FF43"); setActiveStyle("color"); setUppercase(false); }}>Reset</button></div>
           <div className="control-group"><label>Caption style</label><div className="preset-grid">{(["impact", "minimal", "boxed"] as StylePreset[]).map((item) => <button key={item} className={`preset-card ${preset === item ? "selected" : ""}`} onClick={() => setPreset(item)}><span className={`preset-preview preview-${item}`}>Aa</span><span>{item === "impact" ? "Impact" : item === "minimal" ? "Clean" : "Full box"}</span></button>)}</div></div>
           <div className="control-group"><label>Active word</label><div className="highlight-options">{ACTIVE_STYLE_OPTIONS.map((style) => <button key={style.value} className={activeStyle === style.value ? "selected" : ""} onClick={() => setActiveStyle(style.value)}><span className={style.previewClass}>WORD</span><small>{style.label}</small></button>)}</div></div>
           <div className="control-group animation-group"><label>Caption animation</label><div className="animation-selects"><label htmlFor="entry-animation"><span>Entrance</span><select id="entry-animation" value={entryAnimation} onChange={(event) => setEntryAnimation(event.target.value as EntryAnimation)}><option value="none">None</option><option value="fade">Fade in</option><option value="pop">Pop in</option><option value="slide-up">Slide up</option></select></label><label htmlFor="exit-animation"><span>Exit</span><select id="exit-animation" value={exitAnimation} onChange={(event) => setExitAnimation(event.target.value as ExitAnimation)}><option value="none">None</option><option value="fade">Fade out</option><option value="shrink">Shrink</option><option value="slide-down">Slide down</option></select></label></div></div>
@@ -746,7 +747,7 @@ export default function Home() {
             <input id="caption-timing" className="size-slider" type="range" min="-0.75" max="0.75" step="0.01" value={timingOffset} onChange={(event) => setTimingOffset(Number(event.target.value))} style={{ "--progress": `${((timingOffset + 0.75) / 1.5) * 100}%` } as React.CSSProperties} />
             <div className="timing-nudges">
               <button onClick={() => setTimingOffset((value) => clamp(Math.round((value - 0.01) * 100) / 100, -0.75, 0.75))}>Earlier −0.01s</button>
-              <button onClick={() => setTimingOffset(0)}>Reset</button>
+              <button onClick={() => setTimingOffset(DEFAULT_TIMING_OFFSET)}>Reset</button>
               <button onClick={() => setTimingOffset((value) => clamp(Math.round((value + 0.01) * 100) / 100, -0.75, 0.75))}>Later +0.01s</button>
             </div>
             <p>Negative shows captions earlier · positive shows them later</p>
